@@ -3,7 +3,7 @@
  */
 
 // Connection states
-export type ConnectionState = "connecting" | "connected" | "disconnected" | "error"
+export type ConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected" | "error"
 
 // Session status (simplified from backend)
 export type SessionStatus = "idle" | "busy" | "retry"
@@ -39,6 +39,21 @@ export interface ReasoningPart extends BasePart {
   text: string
 }
 
+export interface FilePart extends BasePart {
+  type: "file"
+  mime: string
+  url: string
+  originalUrl?: string
+  filename?: string
+  source?: {
+    text?: {
+      start: number
+      end: number
+      content?: string
+    }
+  }
+}
+
 // Step parts from the backend
 export interface StepStartPart extends BasePart {
   type: "step-start"
@@ -56,7 +71,7 @@ export interface StepFinishPart extends BasePart {
   }
 }
 
-export type Part = TextPart | ToolPart | ReasoningPart | StepStartPart | StepFinishPart
+export type Part = TextPart | ToolPart | ReasoningPart | FilePart | StepStartPart | StepFinishPart
 
 // Part delta for streaming updates
 export interface PartDelta {
@@ -86,6 +101,8 @@ export interface Message {
   content?: string
   parts?: Part[]
   createdAt: string
+  providerID?: string
+  modelID?: string
   cost?: number
   tokens?: TokenUsage
 }
@@ -96,6 +113,19 @@ export interface SessionInfo {
   title?: string
   createdAt: string
   updatedAt: string
+  revert?: {
+    messageID: string
+  }
+  metadata?: {
+    cost?: number
+    model?: string
+    messageCount?: number
+  }
+  summary?: {
+    additions: number
+    deletions: number
+    files: number
+  }
 }
 
 // Permission request
@@ -103,6 +133,9 @@ export interface PermissionRequest {
   id: string
   sessionID: string
   toolName: string
+  permission?: string
+  patterns?: string[]
+  always?: string[]
   args: Record<string, unknown>
   message?: string
   tool?: { messageID: string; callID: string }
@@ -112,7 +145,8 @@ export interface PermissionRequest {
 export interface TodoItem {
   id: string
   content: string
-  status: "pending" | "in_progress" | "completed"
+  status: "pending" | "in_progress" | "completed" | "cancelled"
+  priority?: "high" | "medium" | "low"
 }
 
 // Question types
@@ -144,6 +178,7 @@ export interface AgentInfo {
   name: string
   description?: string
   mode: "subagent" | "primary" | "all"
+  iconName?: string
   native?: boolean
   hidden?: boolean
   color?: string
@@ -182,6 +217,89 @@ export interface ProfileData {
   currentOrgId: string | null
 }
 
+export interface OrganizationProviderAllowList {
+  allowAll: boolean
+  models?: string[]
+}
+
+export interface OrganizationAllowList {
+  allowAll: boolean
+  providers: Record<string, OrganizationProviderAllowList>
+}
+
+export interface ExtensionPolicy {
+  fetchedAt: string
+  allowList?: OrganizationAllowList
+  featureFlags?: Record<string, boolean>
+  mdmEnforced?: boolean
+  mdm?: {
+    requiredCloudAuth: boolean
+    requiredOrganizationId?: string
+    compliant: boolean
+    reason?: string
+    sourcePath?: string
+  }
+  organizationRaw?: Record<string, unknown>
+  userRaw?: Record<string, unknown>
+}
+
+// Marketplace types
+export type MarketplaceItemType = "mode" | "mcp" | "skill"
+
+export interface MarketplaceItemBase {
+  type: MarketplaceItemType
+  id: string
+  name: string
+  description: string
+  managedByOrganization?: boolean
+  author?: string
+  authorUrl?: string
+  tags?: string[]
+  prerequisites?: string[]
+}
+
+export interface MarketplaceMcpParameter {
+  name: string
+  key: string
+  placeholder?: string
+  optional: boolean
+}
+
+export interface MarketplaceMcpInstallMethod {
+  name: string
+  content: string
+  parameters?: MarketplaceMcpParameter[]
+  prerequisites?: string[]
+}
+
+export interface MarketplaceModeItem extends MarketplaceItemBase {
+  type: "mode"
+  content: string
+}
+
+export interface MarketplaceMcpItem extends MarketplaceItemBase {
+  type: "mcp"
+  url: string
+  content: string | MarketplaceMcpInstallMethod[]
+  parameters?: MarketplaceMcpParameter[]
+}
+
+export interface MarketplaceSkillItem extends MarketplaceItemBase {
+  type: "skill"
+  category: string
+  githubUrl: string
+  content: string
+  displayName: string
+  displayCategory: string
+}
+
+export type MarketplaceItem = MarketplaceModeItem | MarketplaceMcpItem | MarketplaceSkillItem
+
+export interface MarketplaceInstalledMetadata {
+  project: Record<string, { type: MarketplaceItemType }>
+  global: Record<string, { type: MarketplaceItemType }>
+}
+
 // Provider/model types for model selector
 
 export interface ProviderModel {
@@ -194,6 +312,7 @@ export interface ProviderModel {
   latest?: boolean
   // Actual shape returned by the server (Provider.Model)
   limit?: { context: number; input?: number; output: number }
+  variants?: Record<string, Record<string, unknown>>
 }
 
 export interface Provider {
@@ -217,6 +336,7 @@ export type PermissionConfig = Partial<Record<string, PermissionLevel>>
 
 export interface AgentConfig {
   model?: string
+  variant?: string
   prompt?: string
   temperature?: number
   top_p?: number
@@ -224,19 +344,50 @@ export interface AgentConfig {
   permission?: PermissionConfig
 }
 
-export interface ProviderConfig {
+export interface ProviderModelConfig {
+  id?: string
   name?: string
+  status?: "active" | "alpha" | "beta" | "deprecated"
+  provider?: { npm?: string }
+  options?: Record<string, unknown>
+  headers?: Record<string, string>
+  variants?: Record<string, Record<string, unknown>>
+  [key: string]: unknown
+}
+
+export interface ProviderOptionsConfig {
+  apiKey?: string
+  baseURL?: string
+  enterpriseUrl?: string
+  setCacheKey?: boolean
+  timeout?: number | false
+  [key: string]: unknown
+}
+
+export interface ProviderConfig {
+  id?: string
+  name?: string
+  api?: string
+  npm?: string
+  env?: string[]
+  whitelist?: string[]
+  blacklist?: string[]
+  options?: ProviderOptionsConfig
+  models?: Record<string, ProviderModelConfig>
+  // Legacy aliases still accepted and normalized in the extension host.
   api_key?: string
   base_url?: string
-  models?: Record<string, unknown>
 }
 
 export interface McpConfig {
-  command?: string
+  command?: string | string[]
   args?: string[]
   env?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  type?: "local" | "remote"
+  enabled?: boolean
+  timeout?: number
 }
 
 export interface CommandConfig {
@@ -287,6 +438,7 @@ export interface Config {
   lsp?: false | Record<string, unknown>
   compaction?: CompactionConfig
   tools?: Record<string, boolean>
+  keybinds?: Record<string, string>
   layout?: "auto" | "stretch"
   experimental?: ExperimentalConfig
 }
@@ -380,6 +532,11 @@ export interface ProfileDataMessage {
   data: ProfileData | null
 }
 
+export interface ExtensionPolicyLoadedMessage {
+  type: "extensionPolicyLoaded"
+  policy: ExtensionPolicy | null
+}
+
 export interface DeviceAuthStartedMessage {
   type: "deviceAuthStarted"
   code?: string
@@ -403,6 +560,11 @@ export interface DeviceAuthCancelledMessage {
 export interface NavigateMessage {
   type: "navigate"
   view: "newTask" | "marketplace" | "history" | "profile" | "settings"
+}
+
+export interface PrefillPromptMessage {
+  type: "prefillPrompt"
+  text: string
 }
 
 export interface ProvidersLoadedMessage {
@@ -432,6 +594,11 @@ export interface ChatCompletionResultMessage {
   type: "chatCompletionResult"
   text: string
   requestId: string
+}
+
+export interface EnhancedPromptMessage {
+  type: "enhancedPrompt"
+  text?: string
 }
 
 export interface QuestionRequestMessage {
@@ -470,6 +637,50 @@ export interface ConfigUpdatedMessage {
   config: Config
 }
 
+export type McpStatus =
+  | { status: "connected"; authUrl?: string }
+  | { status: "disabled"; authUrl?: string }
+  | { status: "failed"; error: string; authUrl?: string }
+  | { status: "needs_auth"; authUrl?: string }
+  | { status: "needs_client_registration"; error: string; authUrl?: string }
+
+export interface McpStatusLoadedMessage {
+  type: "mcpStatusLoaded"
+  status: Record<string, McpStatus>
+}
+
+export interface SettingsUiStateLoadedMessage {
+  type: "settingsUiStateLoaded"
+  activeTab: string
+}
+
+export interface ProviderAuthResultMessage {
+  type: "providerAuthResult"
+  providerID: string
+  action: "connect" | "disconnect"
+  success: boolean
+  message?: string
+}
+
+export interface ValidationIssue {
+  path: string
+  message: string
+  code: string
+}
+
+export interface ConfigValidationErrorMessage {
+  type: "configValidationError"
+  message: string
+  issues: ValidationIssue[]
+}
+
+export interface SettingValidationErrorMessage {
+  type: "settingValidationError"
+  key?: string
+  message: string
+  issues: ValidationIssue[]
+}
+
 export interface NotificationSettingsLoadedMessage {
   type: "notificationSettingsLoaded"
   settings: {
@@ -480,6 +691,112 @@ export interface NotificationSettingsLoadedMessage {
     soundPermissions: string
     soundErrors: string
   }
+}
+
+export interface CommandApprovalSettingsLoadedMessage {
+  type: "commandApprovalSettingsLoaded"
+  settings: {
+    allowedCommands: string[]
+    deniedCommands: string[]
+  }
+}
+
+export interface FollowUpSettingsLoadedMessage {
+  type: "followUpSettingsLoaded"
+  settings: {
+    autoProceedEnabled: boolean
+    autoProceedTimeoutSeconds: number
+  }
+}
+
+export interface GatewayPreferenceLoadedMessage {
+  type: "gatewayPreferenceLoaded"
+  preferGatewayDefault: boolean
+}
+
+export interface FilesSelectedMessage {
+  type: "filesSelected"
+  files: FileAttachment[]
+}
+
+export interface MarketplaceDataMessage {
+  type: "marketplaceData"
+  items: MarketplaceItem[]
+  installedMetadata: MarketplaceInstalledMetadata
+  errors?: string[]
+}
+
+export interface MarketplaceActionResultMessage {
+  type: "marketplaceActionResult"
+  action: "install" | "remove"
+  success: boolean
+  itemID?: string
+  error?: string
+}
+
+export interface RulesCatalogItem {
+  path: string
+  name: string
+  enabled: boolean
+}
+
+export interface RulesCatalog {
+  rules: {
+    global: RulesCatalogItem[]
+    local: RulesCatalogItem[]
+  }
+  workflows: {
+    global: RulesCatalogItem[]
+    local: RulesCatalogItem[]
+  }
+}
+
+export interface RulesCatalogLoadedMessage {
+  type: "rulesCatalogLoaded"
+  catalog: RulesCatalog
+}
+
+export interface SlashCommandInfo {
+  name: string
+  description?: string
+  source?: "command" | "mcp" | "skill"
+  hints?: string[]
+}
+
+export interface SlashCommandsLoadedMessage {
+  type: "slashCommandsLoaded"
+  commands: SlashCommandInfo[]
+  error?: string
+}
+
+export interface FollowUpSuggestion {
+  id: string
+  text: string
+  mode?: string
+}
+
+export type CodeIndexSystemStatus = "Standby" | "Indexing" | "Indexed" | "Error"
+
+export interface CodeIndexStatus {
+  systemStatus: CodeIndexSystemStatus
+  processedItems: number
+  totalItems: number
+  currentItemUnit: "files"
+  indexedFiles: number
+  createdAt?: string
+  workspacePath?: string
+  message?: string
+}
+
+export interface FollowUpSuggestionsMessage {
+  type: "followUpSuggestions"
+  sessionID: string
+  suggestions: FollowUpSuggestion[]
+}
+
+export interface CodeIndexStatusLoadedMessage {
+  type: "codeIndexStatusLoaded"
+  status: CodeIndexStatus
 }
 
 export type ExtensionMessage =
@@ -498,22 +815,40 @@ export type ExtensionMessage =
   | SessionsLoadedMessage
   | ActionMessage
   | ProfileDataMessage
+  | ExtensionPolicyLoadedMessage
   | DeviceAuthStartedMessage
   | DeviceAuthCompleteMessage
   | DeviceAuthFailedMessage
   | DeviceAuthCancelledMessage
   | NavigateMessage
+  | PrefillPromptMessage
   | ProvidersLoadedMessage
   | AgentsLoadedMessage
   | AutocompleteSettingsLoadedMessage
   | ChatCompletionResultMessage
+  | EnhancedPromptMessage
   | QuestionRequestMessage
   | QuestionResolvedMessage
   | QuestionErrorMessage
   | BrowserSettingsLoadedMessage
   | ConfigLoadedMessage
   | ConfigUpdatedMessage
+  | McpStatusLoadedMessage
+  | SettingsUiStateLoadedMessage
+  | ProviderAuthResultMessage
+  | ConfigValidationErrorMessage
+  | SettingValidationErrorMessage
   | NotificationSettingsLoadedMessage
+  | CommandApprovalSettingsLoadedMessage
+  | FollowUpSettingsLoadedMessage
+  | GatewayPreferenceLoadedMessage
+  | FilesSelectedMessage
+  | MarketplaceDataMessage
+  | MarketplaceActionResultMessage
+  | RulesCatalogLoadedMessage
+  | SlashCommandsLoadedMessage
+  | FollowUpSuggestionsMessage
+  | CodeIndexStatusLoadedMessage
 
 // ============================================
 // Messages FROM webview TO extension
@@ -522,6 +857,8 @@ export type ExtensionMessage =
 export interface FileAttachment {
   mime: string
   url: string
+  name?: string
+  previewUrl?: string
 }
 
 export interface SendMessageRequest {
@@ -578,6 +915,16 @@ export interface RefreshProfileRequest {
 export interface OpenExternalRequest {
   type: "openExternal"
   url: string
+}
+
+export interface OpenMarkdownPreviewRequest {
+  type: "openMarkdownPreview"
+  text: string
+}
+
+export interface OpenImageRequest {
+  type: "openImage"
+  text: string
 }
 
 export interface CancelLoginRequest {
@@ -655,6 +1002,12 @@ export interface ChatCompletionAcceptedMessage {
   type: "chatCompletionAccepted"
   suggestionLength?: number
 }
+
+export interface EnhancePromptRequestMessage {
+  type: "enhancePrompt"
+  text?: string
+}
+
 export interface UpdateSettingRequest {
   type: "updateSetting"
   key: string
@@ -669,13 +1022,280 @@ export interface RequestConfigMessage {
   type: "requestConfig"
 }
 
+export interface RequestSlashCommandsMessage {
+  type: "requestSlashCommands"
+}
+
+export interface RequestCodeIndexStatusMessage {
+  type: "requestCodeIndexStatus"
+}
+
+export interface RebuildCodeIndexRequest {
+  type: "rebuildCodeIndex"
+}
+
+export interface ClearCodeIndexRequest {
+  type: "clearCodeIndex"
+}
+
+export interface RunSemanticSearchRequest {
+  type: "runSemanticSearch"
+}
+
 export interface UpdateConfigMessage {
   type: "updateConfig"
   config: Partial<Config>
 }
 
+export type McpServerConfigInput =
+  | {
+      type: "local"
+      command: string[]
+      environment?: Record<string, string>
+      enabled?: boolean
+      timeout?: number
+    }
+  | {
+      type: "remote"
+      url: string
+      headers?: Record<string, string>
+      enabled?: boolean
+      timeout?: number
+    }
+
+export interface RequestMcpStatusMessage {
+  type: "requestMcpStatus"
+}
+
+export interface RequestSettingsUiStateMessage {
+  type: "requestSettingsUiState"
+}
+
+export interface SettingsTabChangedMessage {
+  type: "settingsTabChanged"
+  tab: string
+}
+
+export interface AddMcpServerMessage {
+  type: "addMcpServer"
+  name: string
+  config: McpServerConfigInput
+}
+
+export interface ConnectProviderAuthMessage {
+  type: "connectProviderAuth"
+  providerID: string
+}
+
+export interface DisconnectProviderAuthMessage {
+  type: "disconnectProviderAuth"
+  providerID: string
+}
+
+export interface ConnectMcpServerMessage {
+  type: "connectMcpServer"
+  name: string
+}
+
+export interface DisconnectMcpServerMessage {
+  type: "disconnectMcpServer"
+  name: string
+}
+
 export interface RequestNotificationSettingsMessage {
   type: "requestNotificationSettings"
+}
+
+export interface RequestCommandApprovalSettingsMessage {
+  type: "requestCommandApprovalSettings"
+}
+
+export interface RequestFollowUpSettingsMessage {
+  type: "requestFollowUpSettings"
+}
+
+export interface RequestGatewayPreferenceMessage {
+  type: "requestGatewayPreference"
+}
+
+export interface RetryConnectionRequest {
+  type: "retryConnection"
+}
+
+export interface SelectFilesRequest {
+  type: "selectFiles"
+}
+
+export interface OpenFileAttachmentRequest {
+  type: "openFileAttachment"
+  url: string
+}
+
+export interface SaveFileAttachmentRequest {
+  type: "saveFileAttachment"
+  url: string
+  name?: string
+  mime?: string
+}
+
+export interface OpenFilePathRequest {
+  type: "openFilePath"
+  path: string
+}
+
+export interface OpenDiffPreviewRequest {
+  type: "openDiffPreview"
+  path?: string
+  before: string
+  after: string
+}
+
+export interface OpenBatchDiffPreviewRequest {
+  type: "openBatchDiffPreview"
+  diffs: Array<{
+    path?: string
+    before: string
+    after: string
+  }>
+}
+
+export interface OpenTerminalRequest {
+  type: "openTerminal"
+  cwd?: string
+  command?: string
+}
+
+export interface RevertMessageRequest {
+  type: "revertMessage"
+  sessionID?: string
+  messageID: string
+}
+
+export interface ForkSessionRequest {
+  type: "forkSession"
+  sessionID?: string
+  messageID?: string
+}
+
+export interface OpenForkSessionPickerRequest {
+  type: "openForkSessionPicker"
+  sessionID?: string
+}
+
+export interface OpenCheckpointPickerRequest {
+  type: "openCheckpointPicker"
+  sessionID?: string
+}
+
+export interface UnrevertSessionRequest {
+  type: "unrevertSession"
+  sessionID?: string
+}
+
+export interface PasteAttachmentsRequest {
+  type: "pasteAttachments"
+  files: Array<{
+    mime: string
+    name?: string
+    dataUrl: string
+  }>
+}
+
+export interface SeeNewChangesRequest {
+  type: "seeNewChanges"
+  sessionID?: string
+}
+
+export interface CreateTodoRequest {
+  type: "createTodo"
+  sessionID?: string
+  content: string
+  status?: "pending" | "in_progress" | "completed" | "cancelled"
+  priority?: "high" | "medium" | "low"
+}
+
+export interface UpdateTodoRequest {
+  type: "updateTodo"
+  sessionID?: string
+  todoID: string
+  content?: string
+  status?: "pending" | "in_progress" | "completed" | "cancelled"
+  priority?: "high" | "medium" | "low"
+}
+
+export interface DeleteTodoRequest {
+  type: "deleteTodo"
+  sessionID?: string
+  todoID: string
+}
+
+export interface RequestMarketplaceDataMessage {
+  type: "requestMarketplaceData"
+}
+
+export interface InstallMarketplaceItemMessage {
+  type: "installMarketplaceItem"
+  item: MarketplaceItem
+  target: "project" | "global"
+  selectedIndex?: number
+  parameters?: Record<string, unknown>
+}
+
+export interface RemoveMarketplaceItemMessage {
+  type: "removeMarketplaceItem"
+  item: MarketplaceItem
+  target: "project" | "global"
+}
+
+export interface RequestRulesCatalogMessage {
+  type: "requestRulesCatalog"
+}
+
+export interface CreateRuleFileMessage {
+  type: "createRuleFile"
+  kind: "rule" | "workflow"
+  scope: "global" | "local"
+  filename: string
+}
+
+export interface OpenRuleFileMessage {
+  type: "openRuleFile"
+  kind: "rule" | "workflow"
+  scope: "global" | "local"
+  path: string
+}
+
+export interface DeleteRuleFileMessage {
+  type: "deleteRuleFile"
+  kind: "rule" | "workflow"
+  scope: "global" | "local"
+  path: string
+}
+
+export interface ToggleRuleFileMessage {
+  type: "toggleRuleFile"
+  kind: "rule" | "workflow"
+  scope: "global" | "local"
+  path: string
+  enabled: boolean
+}
+
+export type TelemetryEventName =
+  | "Marketplace Tab Viewed"
+  | "Marketplace Install Button Clicked"
+  | "Marketplace Item Installed"
+  | "Marketplace Item Removed"
+  | "Agent Manager Opened"
+  | "Agent Manager Session Started"
+  | "Agent Manager Session Completed"
+  | "Agent Manager Session Stopped"
+  | "Agent Manager Session Error"
+  | "Agent Manager Login Issue"
+
+export interface TelemetryEventMessage {
+  type: "telemetryEvent"
+  event: TelemetryEventName
+  properties?: Record<string, unknown>
 }
 
 export type WebviewMessage =
@@ -690,6 +1310,8 @@ export type WebviewMessage =
   | LogoutRequest
   | RefreshProfileRequest
   | OpenExternalRequest
+  | OpenMarkdownPreviewRequest
+  | OpenImageRequest
   | CancelLoginRequest
   | SetOrganizationRequest
   | WebviewReadyRequest
@@ -705,11 +1327,55 @@ export type WebviewMessage =
   | UpdateAutocompleteSettingMessage
   | RequestChatCompletionMessage
   | ChatCompletionAcceptedMessage
+  | EnhancePromptRequestMessage
   | UpdateSettingRequest
   | RequestBrowserSettingsMessage
   | RequestConfigMessage
+  | RequestSlashCommandsMessage
+  | RequestCodeIndexStatusMessage
+  | RebuildCodeIndexRequest
+  | ClearCodeIndexRequest
+  | RunSemanticSearchRequest
   | UpdateConfigMessage
+  | RequestMcpStatusMessage
+  | RequestSettingsUiStateMessage
+  | SettingsTabChangedMessage
+  | AddMcpServerMessage
+  | ConnectMcpServerMessage
+  | DisconnectMcpServerMessage
+  | ConnectProviderAuthMessage
+  | DisconnectProviderAuthMessage
   | RequestNotificationSettingsMessage
+  | RequestCommandApprovalSettingsMessage
+  | RequestFollowUpSettingsMessage
+  | RequestGatewayPreferenceMessage
+  | RetryConnectionRequest
+  | SelectFilesRequest
+  | OpenFileAttachmentRequest
+  | SaveFileAttachmentRequest
+  | OpenFilePathRequest
+  | OpenDiffPreviewRequest
+  | OpenBatchDiffPreviewRequest
+  | OpenTerminalRequest
+  | RevertMessageRequest
+  | ForkSessionRequest
+  | OpenForkSessionPickerRequest
+  | OpenCheckpointPickerRequest
+  | UnrevertSessionRequest
+  | PasteAttachmentsRequest
+  | SeeNewChangesRequest
+  | CreateTodoRequest
+  | UpdateTodoRequest
+  | DeleteTodoRequest
+  | RequestMarketplaceDataMessage
+  | InstallMarketplaceItemMessage
+  | RemoveMarketplaceItemMessage
+  | RequestRulesCatalogMessage
+  | CreateRuleFileMessage
+  | OpenRuleFileMessage
+  | DeleteRuleFileMessage
+  | ToggleRuleFileMessage
+  | TelemetryEventMessage
 
 // ============================================
 // VS Code API type
