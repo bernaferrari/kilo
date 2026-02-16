@@ -38,6 +38,7 @@ const iconPaths = {
   copy: '<path d="M6.2513 6.24935V2.91602H17.0846V13.7493H13.7513M13.7513 6.24935V17.0827H2.91797V6.24935H13.7513Z" stroke="currentColor" stroke-linecap="round"/>',
   check: '<path d="M5 11.9657L8.37838 14.7529L15 5.83398" stroke="currentColor" stroke-linecap="square"/>',
 }
+const CODE_COLLAPSE_THRESHOLD_PX = 500
 
 function sanitize(html: string) {
   if (!DOMPurify.isSupported) return ""
@@ -47,6 +48,11 @@ function sanitize(html: string) {
 type CopyLabels = {
   copy: string
   copied: string
+}
+
+type CodeLabels = CopyLabels & {
+  expand: string
+  collapse: string
 }
 
 function createIcon(path: string, slot: string) {
@@ -78,6 +84,16 @@ function createCopyButton(labels: CopyLabels) {
   return button
 }
 
+function createExpandButton(labels: CodeLabels) {
+  const button = document.createElement("button")
+  button.type = "button"
+  button.setAttribute("data-slot", "markdown-expand-button")
+  button.setAttribute("aria-label", labels.expand)
+  button.setAttribute("title", labels.expand)
+  button.textContent = labels.expand
+  return button
+}
+
 function setCopyState(button: HTMLButtonElement, labels: CopyLabels, copied: boolean) {
   if (copied) {
     button.setAttribute("data-copied", "true")
@@ -90,8 +106,19 @@ function setCopyState(button: HTMLButtonElement, labels: CopyLabels, copied: boo
   button.setAttribute("title", labels.copy)
 }
 
-function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
+function setExpandState(wrapper: HTMLDivElement, button: HTMLButtonElement, labels: CodeLabels, expanded: boolean) {
+  wrapper.setAttribute("data-expanded", expanded ? "true" : "false")
+  const label = expanded ? labels.collapse : labels.expand
+  button.setAttribute("aria-label", label)
+  button.setAttribute("title", label)
+  button.textContent = label
+}
+
+function setupCodeInteractions(root: HTMLDivElement, labels: CodeLabels) {
   const timeouts = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>()
+  const touchButtonTimeouts = new Map<HTMLDivElement, ReturnType<typeof setTimeout>>()
+  const touchStartYByPre = new WeakMap<HTMLPreElement, number>()
+  const wrappers = new Set<HTMLDivElement>()
 
   const updateLabel = (button: HTMLButtonElement) => {
     const copied = button.getAttribute("data-copied") === "true"
@@ -100,19 +127,60 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
 
   const ensureWrapper = (block: HTMLPreElement) => {
     const parent = block.parentElement
-    if (!parent) return
+    if (!parent) return null
     const wrapped = parent.getAttribute("data-component") === "markdown-code"
-    if (wrapped) return
+    if (wrapped) {
+      const existing = parent as HTMLDivElement
+      wrappers.add(existing)
+      return existing
+    }
     const wrapper = document.createElement("div")
     wrapper.setAttribute("data-component", "markdown-code")
     parent.replaceChild(wrapper, block)
     wrapper.appendChild(block)
     wrapper.appendChild(createCopyButton(labels))
+    wrapper.appendChild(createExpandButton(labels))
+    wrappers.add(wrapper)
+    return wrapper
+  }
+
+  const configureExpansion = (wrapper: HTMLDivElement) => {
+    const pre = wrapper.querySelector("pre")
+    const expandButton = wrapper.querySelector('[data-slot="markdown-expand-button"]')
+    if (!(pre instanceof HTMLPreElement) || !(expandButton instanceof HTMLButtonElement)) {
+      return
+    }
+
+    const canExpand = pre.scrollHeight > CODE_COLLAPSE_THRESHOLD_PX
+    wrapper.setAttribute("data-can-expand", canExpand ? "true" : "false")
+
+    if (!canExpand) {
+      wrapper.removeAttribute("data-expanded")
+      expandButton.setAttribute("aria-label", labels.expand)
+      expandButton.setAttribute("title", labels.expand)
+      expandButton.textContent = labels.expand
+      return
+    }
+
+    const current = wrapper.getAttribute("data-expanded")
+    const expanded = current === "true"
+    setExpandState(wrapper, expandButton, labels, expanded)
   }
 
   const handleClick = async (event: MouseEvent) => {
     const target = event.target
     if (!(target instanceof Element)) return
+
+    const expandButton = target.closest('[data-slot="markdown-expand-button"]')
+    if (expandButton instanceof HTMLButtonElement) {
+      const wrapper = expandButton.closest('[data-component="markdown-code"]')
+      if (!(wrapper instanceof HTMLDivElement)) return
+      if (wrapper.getAttribute("data-can-expand") !== "true") return
+      const expanded = wrapper.getAttribute("data-expanded") === "true"
+      setExpandState(wrapper, expandButton, labels, !expanded)
+      return
+    }
+
     const button = target.closest('[data-slot="markdown-copy-button"]')
     if (!(button instanceof HTMLButtonElement)) return
     const code = button.closest('[data-component="markdown-code"]')?.querySelector("code")
@@ -128,9 +196,120 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
     timeouts.set(button, timeout)
   }
 
+  const getScrollablePreFromTarget = (target: EventTarget | null): HTMLPreElement | null => {
+    if (!(target instanceof Element)) {
+      return null
+    }
+    const pre = target.closest('[data-component="markdown-code"] pre')
+    if (!(pre instanceof HTMLPreElement)) {
+      return null
+    }
+    if (pre.scrollHeight <= pre.clientHeight) {
+      return null
+    }
+    return pre
+  }
+
+  const markTouchActive = (wrapper: HTMLDivElement) => {
+    wrapper.setAttribute("data-touch-active", "true")
+    const existing = touchButtonTimeouts.get(wrapper)
+    if (existing) {
+      clearTimeout(existing)
+    }
+    const timeout = setTimeout(() => {
+      wrapper.removeAttribute("data-touch-active")
+      touchButtonTimeouts.delete(wrapper)
+    }, 2200)
+    touchButtonTimeouts.set(wrapper, timeout)
+  }
+
+  const handlePointerDown = (event: PointerEvent) => {
+    if (!(event.target instanceof Element)) {
+      return
+    }
+    const wrapper = event.target.closest('[data-component="markdown-code"]')
+    if (wrapper instanceof HTMLDivElement) {
+      markTouchActive(wrapper)
+    }
+  }
+
+  const handleWheel = (event: WheelEvent) => {
+    const pre = getScrollablePreFromTarget(event.target)
+    if (!pre) {
+      return
+    }
+
+    const atTop = pre.scrollTop <= 0
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 1
+    if ((event.deltaY < 0 && !atTop) || (event.deltaY > 0 && !atBottom)) {
+      // Keep nested code-block scrolling isolated from the parent scroll container.
+      event.stopPropagation()
+    }
+  }
+
+  const handleTouchStart = (event: TouchEvent) => {
+    const pre = getScrollablePreFromTarget(event.target)
+    if (!pre) {
+      return
+    }
+    const touch = event.touches[0]
+    if (touch) {
+      touchStartYByPre.set(pre, touch.clientY)
+    }
+  }
+
+  const handleTouchMove = (event: TouchEvent) => {
+    const pre = getScrollablePreFromTarget(event.target)
+    if (!pre) {
+      return
+    }
+    const touch = event.touches[0]
+    if (!touch) {
+      return
+    }
+
+    const lastY = touchStartYByPre.get(pre)
+    touchStartYByPre.set(pre, touch.clientY)
+    if (lastY === undefined) {
+      return
+    }
+
+    const deltaY = lastY - touch.clientY
+    const atTop = pre.scrollTop <= 0
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 1
+    if ((deltaY < 0 && !atTop) || (deltaY > 0 && !atBottom)) {
+      // Mirror wheel behavior for touch scroll chaining.
+      event.stopPropagation()
+    }
+  }
+
+  const updateSelectionState = () => {
+    const selection = document.getSelection()
+    const hasSelection = !!selection && !selection.isCollapsed && selection.rangeCount > 0
+    if (!hasSelection) {
+      for (const wrapper of wrappers) {
+        wrapper.removeAttribute("data-selecting")
+      }
+      return
+    }
+
+    const anchorNode = selection?.anchorNode ?? null
+    for (const wrapper of wrappers) {
+      const containsSelection = !!anchorNode && wrapper.contains(anchorNode)
+      if (containsSelection) {
+        wrapper.setAttribute("data-selecting", "true")
+      } else {
+        wrapper.removeAttribute("data-selecting")
+      }
+    }
+  }
+
   const blocks = Array.from(root.querySelectorAll("pre"))
   for (const block of blocks) {
-    ensureWrapper(block)
+    const wrapper = ensureWrapper(block)
+    if (wrapper) {
+      configureExpansion(wrapper)
+    }
   }
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
@@ -139,11 +318,27 @@ function setupCodeCopy(root: HTMLDivElement, labels: CopyLabels) {
   }
 
   root.addEventListener("click", handleClick)
+  root.addEventListener("pointerdown", handlePointerDown)
+  root.addEventListener("wheel", handleWheel, { passive: true })
+  root.addEventListener("touchstart", handleTouchStart, { passive: true })
+  root.addEventListener("touchmove", handleTouchMove, { passive: true })
+  document.addEventListener("selectionchange", updateSelectionState)
 
   return () => {
     root.removeEventListener("click", handleClick)
+    root.removeEventListener("pointerdown", handlePointerDown)
+    root.removeEventListener("wheel", handleWheel)
+    root.removeEventListener("touchstart", handleTouchStart)
+    root.removeEventListener("touchmove", handleTouchMove)
+    document.removeEventListener("selectionchange", updateSelectionState)
     for (const timeout of timeouts.values()) {
       clearTimeout(timeout)
+    }
+    for (const timeout of touchButtonTimeouts.values()) {
+      clearTimeout(timeout)
+    }
+    for (const wrapper of wrappers) {
+      wrapper.removeAttribute("data-touch-active")
     }
   }
 }
@@ -238,9 +433,11 @@ export function Markdown(
     if (copySetupTimer) clearTimeout(copySetupTimer)
     copySetupTimer = setTimeout(() => {
       if (copyCleanup) copyCleanup()
-      copyCleanup = setupCodeCopy(container, {
+      copyCleanup = setupCodeInteractions(container, {
         copy: i18n.t("ui.message.copy"),
         copied: i18n.t("ui.message.copied"),
+        expand: i18n.t("ui.message.expand"),
+        collapse: i18n.t("ui.message.collapse"),
       })
     }, 150)
   })
