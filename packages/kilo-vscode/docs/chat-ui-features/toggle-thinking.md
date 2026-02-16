@@ -2,7 +2,7 @@
 
 **GitHub Issue:** [#172](https://github.com/Kilo-Org/kilo/issues/172)
 **Priority:** P2
-**Status:** 🔨 Partial (linked [PR #127](https://github.com/Kilo-Org/kilo/pull/127))
+**Status:** ✅ Done (linked [PR #127](https://github.com/Kilo-Org/kilo/pull/127))
 
 ## Description
 
@@ -18,10 +18,15 @@ Allow users to enable or disable "thinking" (extended reasoning) for models that
 
 ## Current State
 
-Reasoning/thinking blocks already render in the chat (collapsible sections in [`Message.tsx`](../../webview-ui/src/components/chat/Message.tsx)). A linked PR (#127) exists suggesting work is in progress.
+Reasoning/thinking blocks render in the chat (collapsible sections in [`Message.tsx`](../../webview-ui/src/components/chat/Message.tsx)).
+
+Prompt input now includes an explicit "Thinking" variant picker in [`PromptInput.tsx`](../../webview-ui/src/components/chat/PromptInput.tsx:1) that:
+
+- Detects model variants from provider metadata
+- Presents explicit per-variant options plus an `off` option for the currently selected agent
+- Persists choice by updating `config.agent[agentName].variant`
+- Uses friendly variant labels when provider metadata exposes `label` / `name` / `title` / `displayName` (falls back to formatted key names)
 
 ## Gaps
 
-- No toggle control in the UI to enable/disable thinking
-- No setting persistence for thinking preference
-- Need to determine how to pass thinking preference to CLI backend
+- None for migration-plan parity scope

@@ -4,7 +4,11 @@ Interactive UI for configuring and toggling auto-approval.
 
 ## Location
 
-The old `AutoApproveDropdown.tsx` and `AutoApproveMenu.tsx` components don't exist in the new extension. [`AutoApproveTab.tsx`](../../webview-ui/src/components/settings/AutoApproveTab.tsx) exists in settings but is currently a stub. Auto-approval configuration needs to be built as a new feature.
+- [`webview-ui/src/components/settings/AutoApproveTab.tsx`](../../webview-ui/src/components/settings/AutoApproveTab.tsx:1)
+
+## Status
+
+✅ Done
 
 ## Interactions
 
@@ -12,9 +16,21 @@ The old `AutoApproveDropdown.tsx` and `AutoApproveMenu.tsx` components don't exi
 - Scope selectors to configure which actions auto-approve
 - Timeout configuration for auto-approval delays
 
+## Current Progress
+
+- Auto-approval settings tab now supports per-tool permission levels (`allow` / `ask` / `deny`)
+- Supports global fallback (`*`) plus tool-level overrides
+- Includes quick presets (`Safe defaults`, `Full auto`, `Require prompts`)
+- Added temporary edit auto-approval window controls with selectable duration and live countdown (`Start window` / `Stop`)
+- Temporary window automatically restores the prior `edit` permission level when the timer expires
+
+## Remaining Gaps
+
+- None for migration-plan parity scope.
+
 ## Suggested migration
 
-**Reimplement?** Partial.
+**Reimplement?** Completed.
 
 - Kilo CLI’s permission system supports “remember/always allow” patterns; Kilo’s auto-approve controls should map onto Kilo CLI permission replies (e.g. “allow once” vs “allow always”) plus Kilo CLI-side permission configuration.
 - The Kilo UI can remain, but the extension host needs a translation layer that:

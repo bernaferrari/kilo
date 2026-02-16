@@ -2,7 +2,7 @@
 
 **GitHub Issue:** [#170](https://github.com/Kilo-Org/kilo/issues/170)
 **Priority:** P1
-**Status:** 🔨 Partial
+**Status:** ✅ Done
 
 ## Description
 
@@ -18,12 +18,28 @@ Replicate the settings that are available in OpenCode (CLI) and allow users to c
 
 ## Current State
 
-15-tab settings shell exists, migrated to kilo-ui `Tabs` component. [`BrowserTab`](../../webview-ui/src/components/settings/BrowserTab.tsx) has real settings controls (enable/disable, system Chrome, headless toggles using kilo-ui `Switch`). [`LanguageTab`](../../webview-ui/src/components/settings/LanguageTab.tsx) has a working locale selector using kilo-ui `Select`. The remaining 13 tabs are still stubs.
+15-tab settings shell exists, migrated to kilo-ui `Tabs` component. Multiple tabs now have working controls and backend persistence, including:
+
+- [`ProvidersTab`](../../webview-ui/src/components/settings/ProvidersTab.tsx) (model defaults and provider allow/deny lists)
+- [`AgentBehaviourTab`](../../webview-ui/src/components/settings/AgentBehaviourTab.tsx) (default agent + per-agent behavior + skills, instructions, and custom commands)
+- [`AutoApproveTab`](../../webview-ui/src/components/settings/AutoApproveTab.tsx) (tool permission levels + presets)
+- [`BrowserTab`](../../webview-ui/src/components/settings/BrowserTab.tsx) (browser automation toggles)
+- [`CheckpointsTab`](../../webview-ui/src/components/settings/CheckpointsTab.tsx) (snapshot toggle)
+- [`DisplayTab`](../../webview-ui/src/components/settings/DisplayTab.tsx), [`AutocompleteTab`](../../webview-ui/src/components/settings/AutocompleteTab.tsx), [`NotificationsTab`](../../webview-ui/src/components/settings/NotificationsTab.tsx), [`ContextTab`](../../webview-ui/src/components/settings/ContextTab.tsx), [`TerminalTab`](../../webview-ui/src/components/settings/TerminalTab.tsx), [`ExperimentalTab`](../../webview-ui/src/components/settings/ExperimentalTab.tsx), [`LanguageTab`](../../webview-ui/src/components/settings/LanguageTab.tsx), [`PromptsTab`](../../webview-ui/src/components/settings/PromptsTab.tsx), and [`AboutKiloCodeTab`](../../webview-ui/src/components/settings/AboutKiloCodeTab.tsx).
 
 ## Gaps
 
-- All tabs are stubs — no actual form controls or settings values
-- No settings read/write integration with CLI backend
-- No settings validation
-- Need to determine which CLI endpoints expose/accept configuration
-- No import/export settings functionality
+- None for migration-plan parity scope.
+
+## Recent Improvements
+
+- Added centralized settings validation in extension host (`src/services/settings/validation.ts`) for:
+  - config patch updates (`updateConfig`)
+  - VS Code-backed settings updates (`updateSetting`)
+  - autocomplete settings updates (`updateAutocompleteSetting`)
+- Invalid updates are now rejected with explicit validation error messages and webview rollback/re-sync behavior.
+- Added settings import/export controls (`AboutKiloCodeTab`) for JSON backup/restore workflows.
+- Added MCP server management UI in Agent Behaviour settings (add/update/remove + connect/disconnect + status refresh).
+- Added rules/workflows file management in Agent Behaviour settings (local/global list, create, open, delete, and per-file enable toggles).
+- Added VS Code setting for commit-message diff filtering (`kilo-code.new.git.commitMessageExcludeGlobs`).
+- Added VS Code settings for code-action prompt templates (`kilo-code.new.codeActions.explainTemplate`, `fixTemplate`, `improveTemplate`).

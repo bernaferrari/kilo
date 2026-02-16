@@ -2,9 +2,14 @@
 
 Interactive editing and message management for user-authored messages.
 
+## Status
+
+✅ Done
+
 ## Location
 
-- [`webview-ui/src/components/chat/ChatRow.tsx`](../../webview-ui/src/components/chat/ChatRow.tsx:1)
+- [`webview-ui/src/components/chat/Message.tsx`](../../webview-ui/src/components/chat/Message.tsx:1)
+- [`webview-ui/src/components/chat/PromptInput.tsx`](../../webview-ui/src/components/chat/PromptInput.tsx:1)
 
 ## Interactions
 
@@ -16,9 +21,24 @@ Interactive editing and message management for user-authored messages.
 - Cancel/Save actions
 - Optional timestamp display
 
+## Current Progress
+
+- Chat rows now display message timestamps from message creation time
+- Up-arrow on an empty prompt restores the previous user message text
+- Message context menus now include session-management actions:
+  - **Fork from message** (create a new session from that point)
+  - **Undo** on user messages (revert session to that message point) with confirmation dialog
+- User message rows now expose inline `Edit` and `Delete` actions.
+- Inline editor is available directly in the row with `Save`/`Cancel` controls and keyboard shortcuts (`Cmd/Ctrl+Enter` save, `Esc` cancel).
+- Edit flow maps cleanly to CLI-backed history semantics (`revertMessage` + prompt prefill for resend), preserving server-owned session history.
+
+## Remaining Gaps
+
+- None for migration-plan parity scope.
+
 ## Suggested migration
 
-**Reimplement?** **Partial** (depends on who owns history).
+**Reimplement?** Completed.
 
 - If Kilo CLI becomes the source of truth for session history, Kilo can’t “just edit/delete locally” anymore; it needs adapter support to express edits as Kilo CLI session operations.
 - Recommended approach:

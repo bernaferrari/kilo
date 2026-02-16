@@ -2,6 +2,10 @@
 
 Right-click/context actions and tooltip affordances throughout the chat UI.
 
+## Status
+
+✅ Done
+
 ## Location
 
 - [`webview-ui/src/components/common/ContextMenu.tsx`](../../webview-ui/src/components/common/ContextMenu.tsx:1)
@@ -11,6 +15,23 @@ Right-click/context actions and tooltip affordances throughout the chat UI.
 
 - Hover tooltips with explanatory text for all interactive buttons
 - Context actions via right-click or dedicated menu buttons
+
+## Current Progress
+
+- Chat message rows now support right-click context actions (copy message, open markdown preview)
+- Chat message rows now support session actions (fork from message, open fork picker, confirmed undo on user messages)
+- Prompt attachment chips now support right-click actions (open file, copy path, remove attachment)
+- Todo rows now support right-click copy actions
+- Recent session quick-resume entries now have hover tooltips
+- Scroll-to-bottom chat control now has hover tooltip
+- Todo panel completed-items toggle now has hover tooltip
+- Follow-up suggestion chips now expose hover/title affordances and explicit edit actions
+- Icon-only remove actions in major settings tabs now have hover tooltips and aria labels
+- Question dock tabs/options and agent-behaviour subtab controls now expose hover labels/titles
+
+## Remaining Gaps
+
+- None for migration-plan parity scope.
 
 ## Suggested migration
 
