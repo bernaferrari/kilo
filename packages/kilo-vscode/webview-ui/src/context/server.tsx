@@ -5,18 +5,32 @@
 
 import { createContext, useContext, createSignal, onMount, onCleanup, ParentComponent, Accessor } from "solid-js"
 import { useVSCode } from "./vscode"
-import type { ConnectionState, ServerInfo, ProfileData, DeviceAuthState, ExtensionMessage } from "../types/messages"
+import type {
+  ConnectionState,
+  ServerInfo,
+  ProfileData,
+  DeviceAuthState,
+  ExtensionMessage,
+  ExtensionPolicy,
+} from "../types/messages"
 
 interface ServerContextValue {
   connectionState: Accessor<ConnectionState>
   serverInfo: Accessor<ServerInfo | undefined>
   error: Accessor<string | undefined>
   isConnected: Accessor<boolean>
+  retryConnection: () => void
   profileData: Accessor<ProfileData | null>
   deviceAuth: Accessor<DeviceAuthState>
   startLogin: () => void
   vscodeLanguage: Accessor<string | undefined>
   languageOverride: Accessor<string | undefined>
+  allowedCommands: Accessor<string[]>
+  deniedCommands: Accessor<string[]>
+  followUpAutoProceedEnabled: Accessor<boolean>
+  followUpAutoProceedTimeoutSeconds: Accessor<number>
+  preferGatewayDefault: Accessor<boolean>
+  extensionPolicy: Accessor<ExtensionPolicy | null>
 }
 
 const ServerContext = createContext<ServerContextValue>()
@@ -33,6 +47,12 @@ export const ServerProvider: ParentComponent = (props) => {
   const [deviceAuth, setDeviceAuth] = createSignal<DeviceAuthState>(initialDeviceAuth)
   const [vscodeLanguage, setVscodeLanguage] = createSignal<string | undefined>()
   const [languageOverride, setLanguageOverride] = createSignal<string | undefined>()
+  const [allowedCommands, setAllowedCommands] = createSignal<string[]>([])
+  const [deniedCommands, setDeniedCommands] = createSignal<string[]>([])
+  const [followUpAutoProceedEnabled, setFollowUpAutoProceedEnabled] = createSignal(false)
+  const [followUpAutoProceedTimeoutSeconds, setFollowUpAutoProceedTimeoutSeconds] = createSignal(60)
+  const [preferGatewayDefault, setPreferGatewayDefault] = createSignal(false)
+  const [extensionPolicy, setExtensionPolicy] = createSignal<ExtensionPolicy | null>(null)
 
   onMount(() => {
     const unsubscribe = vscode.onMessage((message: ExtensionMessage) => {
@@ -40,8 +60,6 @@ export const ServerProvider: ParentComponent = (props) => {
         case "ready":
           console.log("[Kilo New] Server ready:", message.serverInfo)
           setServerInfo(message.serverInfo)
-          setConnectionState("connected")
-          setError(undefined)
           if (message.vscodeLanguage) {
             setVscodeLanguage(message.vscodeLanguage)
           }
@@ -68,6 +86,9 @@ export const ServerProvider: ParentComponent = (props) => {
         case "profileData":
           console.log("[Kilo New] Profile data:", message.data ? "received" : "null")
           setProfileData(message.data)
+          break
+        case "extensionPolicyLoaded":
+          setExtensionPolicy(message.policy)
           break
 
         case "deviceAuthStarted":
@@ -96,6 +117,25 @@ export const ServerProvider: ParentComponent = (props) => {
           console.log("[Kilo New] Device auth cancelled")
           setDeviceAuth(initialDeviceAuth)
           break
+
+        case "commandApprovalSettingsLoaded":
+          setAllowedCommands(Array.isArray(message.settings?.allowedCommands) ? message.settings.allowedCommands : [])
+          setDeniedCommands(Array.isArray(message.settings?.deniedCommands) ? message.settings.deniedCommands : [])
+          break
+
+        case "gatewayPreferenceLoaded":
+          setPreferGatewayDefault(!!message.preferGatewayDefault)
+          break
+
+        case "followUpSettingsLoaded":
+          setFollowUpAutoProceedEnabled(!!message.settings?.autoProceedEnabled)
+          setFollowUpAutoProceedTimeoutSeconds(
+            typeof message.settings?.autoProceedTimeoutSeconds === "number" &&
+              Number.isFinite(message.settings.autoProceedTimeoutSeconds)
+              ? Math.min(Math.max(Math.round(message.settings.autoProceedTimeoutSeconds), 5), 600)
+              : 60,
+          )
+          break
       }
     })
 
@@ -105,6 +145,9 @@ export const ServerProvider: ParentComponent = (props) => {
     // Without this handshake, messages posted during a webview refresh can be lost.
     console.log("[Kilo New] Webview ready")
     vscode.postMessage({ type: "webviewReady" })
+    vscode.postMessage({ type: "requestCommandApprovalSettings" })
+    vscode.postMessage({ type: "requestFollowUpSettings" })
+    vscode.postMessage({ type: "requestGatewayPreference" })
   })
 
   const startLogin = () => {
@@ -112,16 +155,29 @@ export const ServerProvider: ParentComponent = (props) => {
     vscode.postMessage({ type: "login" })
   }
 
+  const retryConnection = () => {
+    setConnectionState("connecting")
+    setError(undefined)
+    vscode.postMessage({ type: "retryConnection" })
+  }
+
   const value: ServerContextValue = {
     connectionState,
     serverInfo,
     error,
     isConnected: () => connectionState() === "connected",
+    retryConnection,
     profileData,
     deviceAuth,
     startLogin,
     vscodeLanguage,
     languageOverride,
+    allowedCommands,
+    deniedCommands,
+    followUpAutoProceedEnabled,
+    followUpAutoProceedTimeoutSeconds,
+    preferGatewayDefault,
+    extensionPolicy,
   }
 
   return <ServerContext.Provider value={value}>{props.children}</ServerContext.Provider>

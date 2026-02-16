@@ -34,6 +34,7 @@ import type {
   AgentInfo,
   ExtensionMessage,
   FileAttachment,
+  FollowUpSuggestion,
 } from "../types/messages"
 
 // Store structure for messages and parts
@@ -43,6 +44,7 @@ interface SessionStore {
   parts: Record<string, Part[]> // messageID -> parts
   todos: Record<string, TodoItem[]> // sessionID -> todos
   modelSelections: Record<string, ModelSelection> // sessionID -> model
+  followUps: Record<string, FollowUpSuggestion[]> // sessionID -> follow-up suggestions
 }
 
 interface SessionContextValue {
@@ -53,19 +55,29 @@ interface SessionContextValue {
 
   // All sessions (sorted most recent first)
   sessions: Accessor<SessionInfo[]>
+  sessionsLoading: Accessor<boolean>
+  sessionsLoadedAt: Accessor<number | null>
+  sessionsLoadError: Accessor<string | null>
 
   // Session status
   status: Accessor<SessionStatus>
   loading: Accessor<boolean>
+  canUndo: Accessor<boolean>
+  canRedo: Accessor<boolean>
 
   // Messages for current session
   messages: Accessor<Message[]>
+  getSessionMessages: (sessionID: string) => Message[]
+  getSessionMetadata: (sessionID: string) => { durationMs: number; cost?: number; model?: string } | undefined
 
   // Parts for a specific message
   getParts: (messageID: string) => Part[]
 
   // Todos for current session
   todos: Accessor<TodoItem[]>
+
+  // Follow-up suggestions for current session
+  followUpSuggestions: Accessor<FollowUpSuggestion[]>
 
   // Pending permission requests
   permissions: Accessor<PermissionRequest[]>
@@ -91,13 +103,32 @@ interface SessionContextValue {
   sendMessage: (text: string, providerID?: string, modelID?: string, files?: FileAttachment[]) => void
   abort: () => void
   compact: () => void
+  undo: () => void
+  redo: () => void
+  seeNewChanges: () => void
+  createTodo: (content: string, status?: "pending" | "in_progress" | "completed" | "cancelled") => void
+  updateTodo: (
+    todoID: string,
+    patch: {
+      content?: string
+      status?: "pending" | "in_progress" | "completed" | "cancelled"
+      priority?: "high" | "medium" | "low"
+    },
+  ) => void
+  deleteTodo: (todoID: string) => void
+  openForkSessionPicker: () => void
+  openCheckpointPicker: () => void
+  revertMessage: (messageID: string) => void
+  forkSession: (messageID?: string) => void
   respondToPermission: (permissionId: string, response: "once" | "always" | "reject") => void
+  respondToPermissions: (permissionIds: string[], response: "once" | "always" | "reject") => void
   replyToQuestion: (requestID: string, answers: string[][]) => void
   rejectQuestion: (requestID: string) => void
   createSession: () => void
   clearCurrentSession: () => void
   loadSessions: () => void
   selectSession: (id: string) => void
+  syncSession: (id: string) => void
   deleteSession: (id: string) => void
   renameSession: (id: string, title: string) => void
 }
@@ -115,6 +146,10 @@ export const SessionProvider: ParentComponent = (props) => {
   // Session status
   const [status, setStatus] = createSignal<SessionStatus>("idle")
   const [loading, setLoading] = createSignal(false)
+  const [sessionsLoading, setSessionsLoading] = createSignal(false)
+  const [sessionsLoadedAt, setSessionsLoadedAt] = createSignal<number | null>(null)
+  const [sessionsLoadError, setSessionsLoadError] = createSignal<string | null>(null)
+  const [pendingSessionsLoad, setPendingSessionsLoad] = createSignal(false)
 
   // Pending permissions
   const [permissions, setPermissions] = createSignal<PermissionRequest[]>([])
@@ -141,6 +176,7 @@ export const SessionProvider: ParentComponent = (props) => {
     parts: {},
     todos: {},
     modelSelections: {},
+    followUps: {},
   })
 
   // Keep pending selection in sync with provider default until the user
@@ -271,6 +307,10 @@ export const SessionProvider: ParentComponent = (props) => {
           handleSessionsLoaded(message.sessions)
           break
 
+        case "followUpSuggestions":
+          setStore("followUps", message.sessionID, message.suggestions)
+          break
+
         case "sessionUpdated":
           setStore("sessions", message.session.id, message.session)
           break
@@ -281,6 +321,13 @@ export const SessionProvider: ParentComponent = (props) => {
 
         case "error":
           setLoading(false)
+          if (
+            typeof message.message === "string" &&
+            /load sessions|session list|session history|not connected to cli backend/i.test(message.message)
+          ) {
+            setSessionsLoading(false)
+            setSessionsLoadError(message.message)
+          }
           break
       }
     })
@@ -425,6 +472,9 @@ export const SessionProvider: ParentComponent = (props) => {
       for (const s of loaded) {
         setStore("sessions", s.id, s)
       }
+      setSessionsLoading(false)
+      setSessionsLoadError(null)
+      setSessionsLoadedAt(Date.now())
     })
   }
 
@@ -464,6 +514,12 @@ export const SessionProvider: ParentComponent = (props) => {
         "modelSelections",
         produce((selections) => {
           delete selections[sessionID]
+        }),
+      )
+      setStore(
+        "followUps",
+        produce((followUps) => {
+          delete followUps[sessionID]
         }),
       )
       // Clean up pending questions/errors for the deleted session
@@ -545,20 +601,194 @@ export const SessionProvider: ParentComponent = (props) => {
     })
   }
 
-  function respondToPermission(permissionId: string, response: "once" | "always" | "reject") {
-    // Resolve sessionID from the stored permission request
-    const permission = permissions().find((p) => p.id === permissionId)
-    const sessionID = permission?.sessionID ?? currentSessionID() ?? ""
+  function undo() {
+    if (!server.isConnected()) {
+      return
+    }
+    const current = currentSession()
+    const revertID = current?.revert?.messageID
+    const sessionMessages = messages().filter((message) => message.role === "user")
+    const target = [...sessionMessages].reverse().find((message) => !revertID || message.id < revertID)
+    if (!target) {
+      return
+    }
+    revertMessage(target.id)
+  }
+
+  function redo() {
+    if (!server.isConnected()) {
+      return
+    }
+    const sessionID = currentSessionID()
+    const revertID = currentSession()?.revert?.messageID
+    if (!sessionID || !revertID) {
+      return
+    }
+
+    const nextMessage = messages().find((message) => message.role === "user" && message.id > revertID)
+    if (nextMessage) {
+      revertMessage(nextMessage.id)
+      return
+    }
 
     vscode.postMessage({
-      type: "permissionResponse",
-      permissionId,
+      type: "unrevertSession",
       sessionID,
-      response,
     })
+  }
 
-    // Remove from pending permissions
-    setPermissions((prev) => prev.filter((p) => p.id !== permissionId))
+  function seeNewChanges() {
+    vscode.postMessage({
+      type: "seeNewChanges",
+      sessionID: currentSessionID(),
+    })
+  }
+
+  function createTodo(content: string, status?: "pending" | "in_progress" | "completed" | "cancelled") {
+    if (!server.isConnected()) {
+      return
+    }
+    const trimmed = content.trim()
+    if (!trimmed) {
+      return
+    }
+    vscode.postMessage({
+      type: "createTodo",
+      sessionID: currentSessionID(),
+      content: trimmed,
+      status,
+    })
+  }
+
+  function updateTodo(
+    todoID: string,
+    patch: {
+      content?: string
+      status?: "pending" | "in_progress" | "completed" | "cancelled"
+      priority?: "high" | "medium" | "low"
+    },
+  ) {
+    if (!server.isConnected()) {
+      return
+    }
+    if (!todoID) {
+      return
+    }
+    const payload: typeof patch = { ...patch }
+    if (typeof payload.content === "string") {
+      const trimmed = payload.content.trim()
+      if (!trimmed) {
+        delete payload.content
+      } else {
+        payload.content = trimmed
+      }
+    }
+    if (Object.keys(payload).length === 0) {
+      return
+    }
+    vscode.postMessage({
+      type: "updateTodo",
+      sessionID: currentSessionID(),
+      todoID,
+      ...payload,
+    })
+  }
+
+  function deleteTodo(todoID: string) {
+    if (!server.isConnected() || !todoID) {
+      return
+    }
+    vscode.postMessage({
+      type: "deleteTodo",
+      sessionID: currentSessionID(),
+      todoID,
+    })
+  }
+
+  function openForkSessionPicker() {
+    if (!server.isConnected()) {
+      return
+    }
+    vscode.postMessage({
+      type: "openForkSessionPicker",
+      sessionID: currentSessionID(),
+    })
+  }
+
+  function openCheckpointPicker() {
+    if (!server.isConnected()) {
+      return
+    }
+    vscode.postMessage({
+      type: "openCheckpointPicker",
+      sessionID: currentSessionID(),
+    })
+  }
+
+  function revertMessage(messageID: string) {
+    if (!server.isConnected()) {
+      console.warn("[Kilo New] Cannot revert message: not connected")
+      return
+    }
+
+    const sessionID = currentSessionID()
+    if (!sessionID) {
+      console.warn("[Kilo New] Cannot revert message: no current session")
+      return
+    }
+
+    vscode.postMessage({
+      type: "revertMessage",
+      sessionID,
+      messageID,
+    })
+  }
+
+  function forkSession(messageID?: string) {
+    if (!server.isConnected()) {
+      console.warn("[Kilo New] Cannot fork session: not connected")
+      return
+    }
+
+    const sessionID = currentSessionID()
+    if (!sessionID) {
+      console.warn("[Kilo New] Cannot fork session: no current session")
+      return
+    }
+
+    vscode.postMessage({
+      type: "forkSession",
+      sessionID,
+      messageID,
+    })
+  }
+
+  function respondToPermission(permissionId: string, response: "once" | "always" | "reject") {
+    respondToPermissions([permissionId], response)
+  }
+
+  function respondToPermissions(permissionIds: string[], response: "once" | "always" | "reject") {
+    const ids = Array.from(new Set(permissionIds.filter((id) => typeof id === "string" && id.trim().length > 0)))
+    if (ids.length === 0) {
+      return
+    }
+
+    const current = permissions()
+    const byId = new Map(current.map((permission) => [permission.id, permission]))
+
+    for (const permissionId of ids) {
+      const permission = byId.get(permissionId)
+      const sessionID = permission?.sessionID ?? currentSessionID() ?? ""
+      vscode.postMessage({
+        type: "permissionResponse",
+        permissionId,
+        sessionID,
+        response,
+      })
+    }
+
+    const idSet = new Set(ids)
+    setPermissions((prev) => prev.filter((permission) => !idSet.has(permission.id)))
   }
 
   function clearQuestionError(requestID: string) {
@@ -614,8 +844,15 @@ export const SessionProvider: ParentComponent = (props) => {
   function loadSessions() {
     if (!server.isConnected()) {
       console.warn("[Kilo New] Cannot load sessions: not connected")
+      setSessionsLoading(true)
+      setSessionsLoadError(null)
+      setPendingSessionsLoad(true)
+      server.retryConnection()
       return
     }
+    setPendingSessionsLoad(false)
+    setSessionsLoading(true)
+    setSessionsLoadError(null)
     vscode.postMessage({ type: "loadSessions" })
   }
 
@@ -627,6 +864,16 @@ export const SessionProvider: ParentComponent = (props) => {
     setCurrentSessionID(id)
     setStatus("idle")
     setLoading(true)
+    vscode.postMessage({ type: "loadMessages", sessionID: id })
+  }
+
+  function syncSession(id: string) {
+    if (!server.isConnected()) {
+      return
+    }
+    if (!id) {
+      return
+    }
     vscode.postMessage({ type: "loadMessages", sessionID: id })
   }
 
@@ -657,6 +904,67 @@ export const SessionProvider: ParentComponent = (props) => {
     return id ? store.messages[id] || [] : []
   }
 
+  const canUndo = createMemo(() => {
+    const current = currentSession()
+    const sessionMessages = messages().filter((message) => message.role === "user")
+    if (sessionMessages.length === 0) {
+      return false
+    }
+    const revertID = current?.revert?.messageID
+    if (!revertID) {
+      return true
+    }
+    return sessionMessages.some((message) => message.id < revertID)
+  })
+
+  const canRedo = createMemo(() => {
+    return !!currentSession()?.revert?.messageID
+  })
+
+  const getSessionMessages = (sessionID: string) => {
+    return store.messages[sessionID] || []
+  }
+
+  const getSessionMetadata = (sessionID: string) => {
+    const info = store.sessions[sessionID]
+    if (!info) {
+      return undefined
+    }
+
+    const created = new Date(info.createdAt).getTime()
+    const updated = new Date(info.updatedAt).getTime()
+    const durationMs = Math.max(0, updated - created)
+
+    const sessionMessages = store.messages[sessionID] || []
+    let totalCost = 0
+    let model: string | undefined
+
+    for (const msg of sessionMessages) {
+      if (msg.role === "assistant") {
+        totalCost += msg.cost ?? 0
+      }
+    }
+
+    for (let i = sessionMessages.length - 1; i >= 0; i--) {
+      const msg = sessionMessages[i]
+      if (msg.role !== "assistant") continue
+      if (msg.providerID && msg.modelID) {
+        model = `${msg.providerID}/${msg.modelID}`
+        break
+      }
+      if (msg.modelID) {
+        model = msg.modelID
+        break
+      }
+    }
+
+    return {
+      durationMs,
+      cost: totalCost > 0 ? totalCost : info.metadata?.cost,
+      model: model ?? info.metadata?.model,
+    }
+  }
+
   const getParts = (messageID: string) => {
     return store.parts[messageID] || []
   }
@@ -666,9 +974,27 @@ export const SessionProvider: ParentComponent = (props) => {
     return id ? store.todos[id] || [] : []
   }
 
+  const followUpSuggestions = () => {
+    const id = currentSessionID()
+    return id ? store.followUps[id] || [] : []
+  }
+
   const sessions = createMemo(() =>
     Object.values(store.sessions).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
   )
+
+  createEffect(() => {
+    if (!pendingSessionsLoad()) {
+      return
+    }
+    if (!server.isConnected()) {
+      return
+    }
+    setPendingSessionsLoad(false)
+    setSessionsLoading(true)
+    setSessionsLoadError(null)
+    vscode.postMessage({ type: "loadSessions" })
+  })
 
   // Total cost across all assistant messages in the current session
   const totalCost = createMemo(() => {
@@ -702,11 +1028,19 @@ export const SessionProvider: ParentComponent = (props) => {
     currentSession,
     setCurrentSessionID,
     sessions,
+    sessionsLoading,
+    sessionsLoadedAt,
+    sessionsLoadError,
     status,
     loading,
+    canUndo,
+    canRedo,
     messages,
+    getSessionMessages,
+    getSessionMetadata,
     getParts,
     todos,
+    followUpSuggestions,
     permissions,
     questions,
     questionErrors,
@@ -720,13 +1054,25 @@ export const SessionProvider: ParentComponent = (props) => {
     sendMessage,
     abort,
     compact,
+    undo,
+    redo,
+    seeNewChanges,
+    createTodo,
+    updateTodo,
+    deleteTodo,
+    openForkSessionPicker,
+    openCheckpointPicker,
+    revertMessage,
+    forkSession,
     respondToPermission,
+    respondToPermissions,
     replyToQuestion,
     rejectQuestion,
     createSession,
     clearCurrentSession,
     loadSessions,
     selectSession,
+    syncSession,
     deleteSession,
     renameSession,
   }
