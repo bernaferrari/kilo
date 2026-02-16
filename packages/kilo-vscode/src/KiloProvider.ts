@@ -6,10 +6,13 @@ import fs from "node:fs/promises"
 import { z } from "zod"
 import { diffLines } from "diff"
 import {
+  type AgentInfo,
   type CommandDefinition,
   type Config,
   type HttpClient,
   type McpConfig,
+  type McpStatus,
+  type MessageInfo,
   type ProfileData,
   type SessionInfo,
   type SSEEvent,
@@ -18,10 +21,13 @@ import {
 } from "./services/cli-backend"
 import { handleChatCompletionRequest } from "./services/autocomplete/chat-autocomplete/handleChatCompletionRequest"
 import { handleChatCompletionAccepted } from "./services/autocomplete/chat-autocomplete/handleChatCompletionAccepted"
+import { handleEnhancePromptRequest } from "./services/prompt-enhancement/handleEnhancePromptRequest"
 import { readSettingsActiveTab, writeLastProviderAuth, writeSettingsActiveTab } from "./services/settings-sync"
 import { logger } from "./utils/logger"
 import { parseAllowedOpenExternalUrl } from "./utils/open-external"
 import { captureTelemetryEvent, parseTelemetryProperties, telemetryEventNameSchema } from "./utils/telemetry"
+import { isPathInsideAnyRoot } from "./utils/path-security"
+import { buildWebviewCsp } from "./utils/webview-csp"
 import { RulesWorkflowsService } from "./services/settings/rules-workflows"
 import {
   validateAutocompleteSettingUpdate,
@@ -120,8 +126,25 @@ const extensionSettingsEnvelopeSchema = z
   })
   .passthrough()
 
+const codeIndexStatusSchema = z.object({
+  systemStatus: z.enum(["Standby", "Indexing", "Indexed", "Error"]),
+  processedItems: z.number(),
+  totalItems: z.number(),
+  currentItemUnit: z.literal("files"),
+  indexedFiles: z.number(),
+  createdAt: z.string().optional(),
+  workspacePath: z.string().optional(),
+  message: z.string().optional(),
+})
+
+interface FollowUpSuggestion {
+  id: string
+  text: string
+  mode?: string
+}
+
 export class KiloProvider implements vscode.WebviewViewProvider {
-  public static readonly viewType = "kilo-code.new.sidebarView"
+  public static readonly viewType = "kilo-code-new-sidebarView-main"
   private static readonly notificationTimestamps = new Map<string, number>()
 
   private webview: vscode.Webview | null = null
@@ -141,6 +164,8 @@ export class KiloProvider implements vscode.WebviewViewProvider {
   private mdmPolicy: MdmPolicyConfig | null = null
   /** Most recent cloud profile payload; undefined means unknown/not fetched yet. */
   private latestProfileData: ProfileData | null | undefined = undefined
+  /** Latest visible agent list (cached for contextual follow-up suggestion mode hints). */
+  private latestVisibleAgents: AgentInfo[] = []
 
   private trackedSessionIds: Set<string> = new Set()
   private unsubscribeEvent: (() => void) | null = null
@@ -218,12 +243,12 @@ export class KiloProvider implements vscode.WebviewViewProvider {
         .showWarningMessage(message, OPEN_PROFILE_ACTION_LABEL, SIGN_IN_ACTION_LABEL)
         .then((selection) => {
           if (selection === OPEN_PROFILE_ACTION_LABEL) {
-            void vscode.commands.executeCommand("kilo-code.new.sidebarView.focus")
+            void vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
             this.postMessage({ type: "navigate", view: "profile" })
             return
           }
           if (selection === SIGN_IN_ACTION_LABEL) {
-            void vscode.commands.executeCommand("kilo-code.new.sidebarView.focus")
+            void vscode.commands.executeCommand(`${KiloProvider.viewType}.focus`)
             this.postMessage({ type: "navigate", view: "profile" })
             void this.handleLogin()
           }
@@ -271,6 +296,7 @@ export class KiloProvider implements vscode.WebviewViewProvider {
     }
     this.sendSettingsUiState()
     this.sendCommandApprovalSettings()
+    this.sendFollowUpSettings()
     this.sendGatewayPreference()
     if (this.cachedExtensionPolicyMessage) {
       this.postMessage(this.cachedExtensionPolicyMessage)
@@ -442,6 +468,11 @@ export class KiloProvider implements vscode.WebviewViewProvider {
             await this.handleOpenMarkdownPreview(message.text)
           }
           break
+        case "openImage":
+          if (typeof message.text === "string") {
+            await this.handleOpenImage(message.text)
+          }
+          break
         case "openFileAttachment": {
           const url = z.string().startsWith("file://").safeParse(message.url)
           if (url.success) {
@@ -577,6 +608,28 @@ export class KiloProvider implements vscode.WebviewViewProvider {
         case "requestSlashCommands":
           await this.handleRequestSlashCommands()
           break
+        case "requestCodeIndexStatus":
+          await this.handleRequestCodeIndexStatus()
+          break
+        case "rebuildCodeIndex":
+          this.postCodeIndexStatus({
+            systemStatus: "Indexing",
+            processedItems: 0,
+            totalItems: 0,
+            currentItemUnit: "files",
+            indexedFiles: 0,
+            workspacePath: this.getWorkspaceDirectory(),
+          })
+          await vscode.commands.executeCommand("kilo-code.new.rebuildCodeIndex")
+          await this.handleRequestCodeIndexStatus()
+          break
+        case "clearCodeIndex":
+          await vscode.commands.executeCommand("kilo-code.new.clearCodeIndex")
+          await this.handleRequestCodeIndexStatus()
+          break
+        case "runSemanticSearch":
+          await vscode.commands.executeCommand("kilo-code.new.semanticSearch")
+          break
         case "requestMcpStatus":
           await this.fetchAndSendMcpStatus()
           break
@@ -628,6 +681,13 @@ export class KiloProvider implements vscode.WebviewViewProvider {
             this.connectionService,
           )
           break
+        case "enhancePrompt":
+          void handleEnhancePromptRequest(
+            { type: "enhancePrompt", text: message.text },
+            { postMessage: (msg) => this.postMessage(msg) },
+            this.connectionService,
+          )
+          break
         case "chatCompletionAccepted":
           handleChatCompletionAccepted({ type: "chatCompletionAccepted", suggestionLength: message.suggestionLength })
           break
@@ -643,6 +703,7 @@ export class KiloProvider implements vscode.WebviewViewProvider {
             this.postSettingValidationError(typeof message.key === "string" ? message.key : undefined, validated.issues)
             this.sendBrowserSettings()
             this.sendNotificationSettings()
+            this.sendFollowUpSettings()
             break
           }
 
@@ -659,6 +720,9 @@ export class KiloProvider implements vscode.WebviewViewProvider {
           if (validated.value.key === "allowedCommands" || validated.value.key === "deniedCommands") {
             this.sendCommandApprovalSettings()
           }
+          if (validated.value.key.startsWith("followUp.")) {
+            this.sendFollowUpSettings()
+          }
           if (validated.value.key === "model.preferGatewayDefault") {
             this.sendGatewayPreference()
             await this.fetchAndSendProviders()
@@ -673,6 +737,9 @@ export class KiloProvider implements vscode.WebviewViewProvider {
           break
         case "requestCommandApprovalSettings":
           this.sendCommandApprovalSettings()
+          break
+        case "requestFollowUpSettings":
+          this.sendFollowUpSettings()
           break
         case "requestGatewayPreference":
           this.sendGatewayPreference()
@@ -833,9 +900,62 @@ export class KiloProvider implements vscode.WebviewViewProvider {
 
   private async handleOpenFileAttachment(fileUrl: string): Promise<void> {
     try {
-      await vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(fileUrl))
+      const uri = vscode.Uri.parse(fileUrl)
+      if (uri.scheme === "file") {
+        const allowed = await this.isPathInsideAllowedRoots(uri.fsPath)
+        if (!allowed) {
+          void vscode.window.showWarningMessage("Blocked opening a file outside the current workspace scope.")
+          return
+        }
+      }
+      await vscode.commands.executeCommand("vscode.open", uri)
     } catch (error) {
       logger.error("[Kilo New] KiloProvider: Failed to open file attachment:", error)
+    }
+  }
+
+  private inferDataUrlMime(dataUrl: string): string | undefined {
+    const match = /^data:([^;,]+)?(?:;charset=[^;,]+)?(?:;base64)?,/i.exec(dataUrl)
+    if (!match?.[1]) {
+      return undefined
+    }
+    return match[1].toLowerCase()
+  }
+
+  private async handleOpenImage(rawValue: string): Promise<void> {
+    const value = rawValue.trim()
+    if (!value) {
+      return
+    }
+
+    try {
+      if (value.startsWith("file://")) {
+        await this.handleOpenFileAttachment(value)
+        return
+      }
+
+      if (value.startsWith("http://") || value.startsWith("https://")) {
+        const parsed = parseAllowedOpenExternalUrl(value)
+        if (parsed) {
+          await vscode.env.openExternal(vscode.Uri.parse(parsed))
+        }
+        return
+      }
+
+      if (!value.startsWith("data:")) {
+        return
+      }
+
+      await fs.mkdir(this.attachmentTempDir, { recursive: true })
+      const mime = this.inferDataUrlMime(value) ?? "image/png"
+      const extension = ATTACHMENT_MIME_TO_EXT[mime] ?? ".png"
+      const fileName = `kilo-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`
+      const filePath = path.join(this.attachmentTempDir, fileName)
+      const bytes = await this.readAttachmentBytes(value)
+      await fs.writeFile(filePath, Buffer.from(bytes))
+      await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(filePath))
+    } catch (error) {
+      logger.error("[Kilo New] KiloProvider: Failed to open image:", error)
     }
   }
 
@@ -879,7 +999,12 @@ export class KiloProvider implements vscode.WebviewViewProvider {
 
   private async readAttachmentBytes(rawUrl: string): Promise<Uint8Array> {
     if (rawUrl.startsWith("file://")) {
-      return vscode.workspace.fs.readFile(vscode.Uri.parse(rawUrl))
+      const uri = vscode.Uri.parse(rawUrl)
+      const allowed = await this.isPathInsideAllowedRoots(uri.fsPath)
+      if (!allowed) {
+        throw new Error("Blocked reading file attachment outside workspace scope")
+      }
+      return vscode.workspace.fs.readFile(uri)
     }
     if (rawUrl.startsWith("data:")) {
       return this.decodeDataUrl(rawUrl)
@@ -941,6 +1066,14 @@ export class KiloProvider implements vscode.WebviewViewProvider {
               ? value
               : path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(), value),
           )
+
+      if (uri.scheme === "file") {
+        const allowed = await this.isPathInsideAllowedRoots(uri.fsPath)
+        if (!allowed) {
+          void vscode.window.showWarningMessage("Blocked opening a file outside the current workspace scope.")
+          return
+        }
+      }
       await vscode.commands.executeCommand("vscode.open", uri)
     } catch (error) {
       logger.error("[Kilo New] KiloProvider: Failed to open file path:", { path: value, error })
@@ -1041,7 +1174,7 @@ export class KiloProvider implements vscode.WebviewViewProvider {
     await this.handleOpenDiffPreview(selected.path, selected.before, selected.after)
   }
 
-  private resolveTerminalCwd(rawCwd: unknown): string {
+  private async resolveTerminalCwd(rawCwd: unknown): Promise<string> {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()
     if (typeof rawCwd !== "string" || rawCwd.trim().length === 0) {
       return workspaceRoot
@@ -1049,15 +1182,12 @@ export class KiloProvider implements vscode.WebviewViewProvider {
 
     const trimmed = rawCwd.trim()
     const candidate = path.isAbsolute(trimmed) ? trimmed : path.resolve(workspaceRoot, trimmed)
-    const normalizedRoot = path.resolve(workspaceRoot)
-    const normalizedCandidate = path.resolve(candidate)
-    const withinRoot =
-      normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`)
-    return withinRoot ? normalizedCandidate : normalizedRoot
+    const withinRoot = await isPathInsideAnyRoot(candidate, [workspaceRoot])
+    return withinRoot ? path.resolve(candidate) : workspaceRoot
   }
 
   private async handleOpenTerminal(rawCwd: unknown, rawCommand: unknown): Promise<void> {
-    const cwd = this.resolveTerminalCwd(rawCwd)
+    const cwd = await this.resolveTerminalCwd(rawCwd)
     const terminal = vscode.window.createTerminal({ name: "Kilo Code Terminal", cwd })
     terminal.show(false)
 
@@ -1463,6 +1593,12 @@ export class KiloProvider implements vscode.WebviewViewProvider {
         messages,
       })
 
+      this.postMessage({
+        type: "followUpSuggestions",
+        sessionID,
+        suggestions: this.buildFollowUpSuggestionsFromHistory(messagesData),
+      })
+
       await this.refreshTodosForSession(sessionID, workspaceDir)
     } catch (error) {
       logger.error("[Kilo New] KiloProvider: Failed to load messages:", error)
@@ -1502,6 +1638,169 @@ export class KiloProvider implements vscode.WebviewViewProvider {
       })
     } catch (error) {
       logger.debug("[Kilo New] KiloProvider: No todos loaded for session", { sessionID, error })
+    }
+  }
+
+  private collectPlainTextFromParts(parts: MessagePart[]): string {
+    const chunks: string[] = []
+
+    for (const part of parts) {
+      if (part.type === "text" && typeof part.text === "string") {
+        chunks.push(part.text)
+        continue
+      }
+
+      if (part.type === "reasoning" && typeof part.text === "string") {
+        chunks.push(part.text)
+        continue
+      }
+
+      if (part.type === "tool" && part.state && typeof part.state === "object") {
+        const state = part.state as {
+          status?: string
+          title?: unknown
+          output?: unknown
+          error?: unknown
+        }
+        if (typeof state.title === "string") {
+          chunks.push(state.title)
+        }
+        if (typeof state.output === "string") {
+          chunks.push(state.output)
+        }
+        if (typeof state.error === "string") {
+          chunks.push(state.error)
+        }
+      }
+    }
+
+    return chunks.join("\n").trim()
+  }
+
+  private resolveFollowUpMode(candidates: string[]): string | undefined {
+    if (candidates.length === 0 || this.latestVisibleAgents.length === 0) {
+      return undefined
+    }
+    const agentByLower = new Map(this.latestVisibleAgents.map((agent) => [agent.name.toLowerCase(), agent.name]))
+    for (const candidate of candidates) {
+      const exact = agentByLower.get(candidate.toLowerCase())
+      if (exact) {
+        return exact
+      }
+    }
+    return undefined
+  }
+
+  private buildFollowUpSuggestionsFromHistory(
+    history: Array<{ info: MessageInfo; parts: MessagePart[] }>,
+  ): FollowUpSuggestion[] {
+    const latestAssistant = [...history].reverse().find((entry) => entry.info.role === "assistant")
+    if (!latestAssistant) {
+      return []
+    }
+
+    const latestUser = [...history].reverse().find((entry) => entry.info.role === "user")
+    const assistantText = this.collectPlainTextFromParts(latestAssistant.parts)
+    const userText = latestUser ? this.collectPlainTextFromParts(latestUser.parts) : ""
+    const normalizedAssistant = assistantText.toLowerCase()
+    const normalizedUser = userText.toLowerCase()
+
+    let suggestions: FollowUpSuggestion[]
+
+    const errorLike = /\b(error|failed|failure|exception|traceback|unable|cannot|timeout)\b/i.test(assistantText)
+    const codeLike = /```|diff|patch|stack trace|changed file|refactor|implementation|function|class/i.test(assistantText)
+    const planningLike = /\b(next|plan|roadmap|todo|milestone|priority)\b/i.test(`${normalizedAssistant}\n${normalizedUser}`)
+
+    if (errorLike) {
+      suggestions = [
+        {
+          id: "debug-root-cause",
+          text: "Identify the likely root cause and explain why it failed.",
+          mode: this.resolveFollowUpMode(["debug", "troubleshoot", "review"]),
+        },
+        {
+          id: "debug-minimal-fix",
+          text: "Propose a minimal fix and include a small patch plan.",
+          mode: this.resolveFollowUpMode(["debug", "code", "architect"]),
+        },
+        {
+          id: "debug-verify",
+          text: "What checks should I run to verify the fix safely?",
+        },
+      ]
+    } else if (codeLike) {
+      suggestions = [
+        {
+          id: "code-walkthrough",
+          text: "Walk me through these changes step by step.",
+          mode: this.resolveFollowUpMode(["review", "architect", "code"]),
+        },
+        {
+          id: "code-tests",
+          text: "What tests should I run next for this change?",
+        },
+        {
+          id: "code-risks",
+          text: "What are the biggest regression risks here?",
+          mode: this.resolveFollowUpMode(["review", "debug"]),
+        },
+      ]
+    } else if (planningLike) {
+      suggestions = [
+        {
+          id: "plan-next",
+          text: "What is the highest-impact next step?",
+        },
+        {
+          id: "plan-checklist",
+          text: "Turn this into a concise checklist with priorities.",
+          mode: this.resolveFollowUpMode(["architect", "planner"]),
+        },
+        {
+          id: "plan-verify",
+          text: "What evidence should we collect to mark this done?",
+        },
+      ]
+    } else {
+      suggestions = [
+        {
+          id: "summary",
+          text: "Summarize this response in 3 concise bullets.",
+        },
+        {
+          id: "next-step",
+          text: "What should I do next to make the most progress?",
+        },
+        {
+          id: "validation",
+          text: "How can I quickly validate this end-to-end?",
+        },
+      ]
+    }
+
+    const seen = new Set<string>()
+    return suggestions.filter((item) => {
+      const key = item.text.trim().toLowerCase()
+      if (!key || seen.has(key)) {
+        return false
+      }
+      seen.add(key)
+      return true
+    })
+  }
+
+  private async refreshFollowUpSuggestions(sessionID: string): Promise<void> {
+    const client = this.httpClient ?? (await this.ensureHttpClient())
+    if (!client) {
+      return
+    }
+    const workspaceDir = this.getWorkspaceDirectory()
+    try {
+      const history = await client.getMessages(sessionID, workspaceDir)
+      const suggestions = this.buildFollowUpSuggestionsFromHistory(history)
+      this.postMessage({ type: "followUpSuggestions", sessionID, suggestions })
+    } catch (error) {
+      logger.debug("[Kilo New] KiloProvider: Failed to refresh follow-up suggestions", { sessionID, error })
     }
   }
 
@@ -1703,6 +2002,60 @@ export class KiloProvider implements vscode.WebviewViewProvider {
   private parseMarketplaceParameters(rawParameters: unknown): Record<string, unknown> {
     const parsed = z.record(z.string(), z.unknown()).safeParse(rawParameters)
     return parsed.success ? parsed.data : {}
+  }
+
+  private getCachedAllowListPolicy():
+    | { allowAll: boolean; providers: Record<string, { allowAll: boolean; models?: string[] }> }
+    | null {
+    const envelope =
+      this.cachedExtensionPolicyMessage &&
+      typeof this.cachedExtensionPolicyMessage === "object" &&
+      !Array.isArray(this.cachedExtensionPolicyMessage)
+        ? (this.cachedExtensionPolicyMessage as { policy?: unknown })
+        : null
+    const policy =
+      envelope?.policy && typeof envelope.policy === "object" && !Array.isArray(envelope.policy)
+        ? (envelope.policy as Record<string, unknown>)
+        : null
+    const parsed = organizationAllowListSchema.safeParse(policy?.allowList)
+    if (!parsed.success) {
+      return null
+    }
+    return {
+      allowAll: parsed.data.allowAll,
+      providers: parsed.data.providers,
+    }
+  }
+
+  private getOrganizationPolicyViolation(providerID?: string, modelID?: string): string | null {
+    const allowList = this.getCachedAllowListPolicy()
+    if (!allowList || allowList.allowAll) {
+      return null
+    }
+
+    const provider = providerID?.trim()
+    const model = modelID?.trim()
+    if (!provider || !model) {
+      return "Organization policy requires selecting an allowed provider/model before sending."
+    }
+
+    const providerRule = allowList.providers[provider]
+    if (!providerRule) {
+      return `Provider \"${provider}\" is blocked by organization policy.`
+    }
+    if (providerRule.allowAll) {
+      return null
+    }
+
+    const models = Array.isArray(providerRule.models) ? providerRule.models : []
+    if (models.length === 0) {
+      return `Provider \"${provider}\" has no allowed models under organization policy.`
+    }
+    if (!models.includes(model)) {
+      return `Model \"${model}\" is not allowed for provider \"${provider}\" by organization policy.`
+    }
+
+    return null
   }
 
   private sessionHistoryCacheKey(workspaceDir?: string): string {
@@ -2181,6 +2534,7 @@ export class KiloProvider implements vscode.WebviewViewProvider {
 
       // Filter to only visible primary/all modes (not subagents, not hidden)
       const visible = agents.filter((a) => a.mode !== "subagent" && !a.hidden)
+      this.latestVisibleAgents = visible
 
       // Find default agent: first one in list (CLI sorts default first)
       const defaultAgent = visible.length > 0 ? visible[0].name : "code"
@@ -2191,6 +2545,7 @@ export class KiloProvider implements vscode.WebviewViewProvider {
           name: a.name,
           description: a.description,
           mode: a.mode,
+          iconName: a.iconName,
           native: a.native,
           color: a.color,
         })),
@@ -2260,6 +2615,45 @@ export class KiloProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private postCodeIndexStatus(status: z.infer<typeof codeIndexStatusSchema>): void {
+    this.postMessage({
+      type: "codeIndexStatusLoaded",
+      status,
+    })
+  }
+
+  private async handleRequestCodeIndexStatus(): Promise<void> {
+    try {
+      const rawStatus = await vscode.commands.executeCommand("kilo-code.new.getCodeIndexStatus")
+      const parsed = codeIndexStatusSchema.safeParse(rawStatus)
+      if (!parsed.success) {
+        logger.warn("[Kilo New] KiloProvider: Invalid code index status payload")
+        this.postCodeIndexStatus({
+          systemStatus: "Standby",
+          processedItems: 0,
+          totalItems: 0,
+          currentItemUnit: "files",
+          indexedFiles: 0,
+          message: "Code index status unavailable",
+          workspacePath: this.getWorkspaceDirectory(),
+        })
+        return
+      }
+      this.postCodeIndexStatus(parsed.data)
+    } catch (error) {
+      logger.error("[Kilo New] KiloProvider: Failed to fetch code index status:", error)
+      this.postCodeIndexStatus({
+        systemStatus: "Error",
+        processedItems: 0,
+        totalItems: 0,
+        currentItemUnit: "files",
+        indexedFiles: 0,
+        message: error instanceof Error ? error.message : "Failed to fetch code index status",
+        workspacePath: this.getWorkspaceDirectory(),
+      })
+    }
+  }
+
   /**
    * Fetch MCP server status and send to webview.
    */
@@ -2277,7 +2671,7 @@ export class KiloProvider implements vscode.WebviewViewProvider {
       const status = await client.getMcpStatus()
       this.postMessage({
         type: "mcpStatusLoaded",
-        status,
+        status: this.normalizeMcpStatusMap(status),
       })
     } catch (error) {
       logger.error("[Kilo New] KiloProvider: Failed to fetch MCP status:", error)
@@ -2328,6 +2722,22 @@ export class KiloProvider implements vscode.WebviewViewProvider {
     })
   }
 
+  private sendFollowUpSettings(): void {
+    const config = vscode.workspace.getConfiguration("kilo-code.new.followUp")
+    const enabled = config.get<boolean>("autoProceedEnabled", false)
+    const timeoutRaw = config.get<number>("autoProceedTimeoutSeconds", 60)
+    const timeoutSeconds =
+      typeof timeoutRaw === "number" && Number.isFinite(timeoutRaw) ? Math.min(Math.max(Math.round(timeoutRaw), 5), 600) : 60
+
+    this.postMessage({
+      type: "followUpSettingsLoaded",
+      settings: {
+        autoProceedEnabled: enabled,
+        autoProceedTimeoutSeconds: timeoutSeconds,
+      },
+    })
+  }
+
   private sendGatewayPreference(): void {
     const config = vscode.workspace.getConfiguration("kilo-code.new.model")
     this.postMessage({
@@ -2367,6 +2777,47 @@ export class KiloProvider implements vscode.WebviewViewProvider {
       message: "Invalid setting update",
       issues,
     })
+  }
+
+  private normalizeMcpStatusMap(statuses: Record<string, McpStatus>): Record<string, McpStatus> {
+    const normalized: Record<string, McpStatus> = {}
+    for (const [name, status] of Object.entries(statuses)) {
+      normalized[name] = this.normalizeMcpStatus(status)
+    }
+    return normalized
+  }
+
+  private normalizeMcpStatus(status: McpStatus): McpStatus {
+    const statusRecord = status as McpStatus & {
+      authUrl?: unknown
+      authURL?: unknown
+      url?: unknown
+      error?: unknown
+      message?: unknown
+    }
+
+    const directCandidate =
+      (typeof statusRecord.authUrl === "string" && statusRecord.authUrl) ||
+      (typeof statusRecord.authURL === "string" && statusRecord.authURL) ||
+      (typeof statusRecord.url === "string" && statusRecord.url) ||
+      undefined
+    const messageCandidate =
+      (typeof statusRecord.error === "string" && statusRecord.error) ||
+      (typeof statusRecord.message === "string" && statusRecord.message) ||
+      undefined
+    const extracted = directCandidate ?? this.extractFirstUrlFromText(messageCandidate)
+    if (!extracted) {
+      return status
+    }
+    return { ...status, authUrl: extracted }
+  }
+
+  private extractFirstUrlFromText(value?: string): string | undefined {
+    if (!value) {
+      return undefined
+    }
+    const match = value.match(/https?:\/\/[^\s)'"`]+/i)
+    return match?.[0]
   }
 
   /**
@@ -2519,6 +2970,14 @@ export class KiloProvider implements vscode.WebviewViewProvider {
     if (!(await this.ensureMdmComplianceOrReject("send-message"))) {
       return
     }
+    const policyViolation = this.getOrganizationPolicyViolation(providerID, modelID)
+    if (policyViolation) {
+      this.postMessage({
+        type: "error",
+        message: policyViolation,
+      })
+      return
+    }
 
     try {
       const workspaceDir = this.getWorkspaceDirectory()
@@ -2621,6 +3080,14 @@ export class KiloProvider implements vscode.WebviewViewProvider {
       this.postMessage({
         type: "error",
         message: "No model selected. Connect a provider to compact this session.",
+      })
+      return
+    }
+    const policyViolation = this.getOrganizationPolicyViolation(providerID, modelID)
+    if (policyViolation) {
+      this.postMessage({
+        type: "error",
+        message: policyViolation,
       })
       return
     }
@@ -3268,6 +3735,18 @@ export class KiloProvider implements vscode.WebviewViewProvider {
           sessionID: event.properties.sessionID,
           status: event.properties.status.type,
         })
+        if (event.properties.status.type === "idle") {
+          void this.refreshFollowUpSuggestions(event.properties.sessionID)
+        }
+        break
+
+      case "session.idle":
+        this.postMessage({
+          type: "sessionStatus",
+          sessionID: event.properties.sessionID,
+          status: "idle",
+        })
+        void this.refreshFollowUpSuggestions(event.properties.sessionID)
         break
 
       case "permission.asked":
@@ -3485,6 +3964,14 @@ export class KiloProvider implements vscode.WebviewViewProvider {
     return target === tempRoot || target.startsWith(`${tempRoot}${path.sep}`)
   }
 
+  private async isPathInsideAllowedRoots(targetPath: string): Promise<boolean> {
+    const roots = [
+      ...(vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? []),
+      this.attachmentTempDir,
+    ]
+    return isPathInsideAnyRoot(targetPath, roots)
+  }
+
   private getLocalResourceRoots(): vscode.Uri[] {
     const roots = [this.extensionUri]
     const workspaceRoots = vscode.workspace.workspaceFolders?.map((folder) => folder.uri) ?? []
@@ -3510,18 +3997,12 @@ export class KiloProvider implements vscode.WebviewViewProvider {
 
     // CSP allows:
     // - default-src 'none': Block everything by default
-    // - style-src: Allow inline styles and our CSS file
+    // - style-src: Inline styles are still required by bundled UI primitives that emit runtime style attributes
     // - script-src 'nonce-...': Only allow scripts with our nonce
+    // - 'wasm-unsafe-eval' remains required for syntax/highlight tooling that relies on WASM evaluation
     // - connect-src: allow only extension-local resource origin (no localhost wildcard network access)
-    // - img-src: Allow images from webview and data URIs
-    const csp = [
-      "default-src 'none'",
-      `style-src 'unsafe-inline' ${webview.cspSource}`,
-      `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
-      `font-src ${webview.cspSource}`,
-      `connect-src ${webview.cspSource}`,
-      `img-src ${webview.cspSource} data: https:`,
-    ].join("; ")
+    // - img-src: allow only extension/data/blob origins (external images are opened through openExternal)
+    const csp = buildWebviewCsp({ cspSource: webview.cspSource, nonce })
 
     return `<!DOCTYPE html>
 <html lang="en" data-theme="kilo-vscode">
