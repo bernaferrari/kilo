@@ -65,6 +65,7 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
   const language = useLanguage()
   const [target, setTarget] = createSignal<string | null>(null)
 
+  // Reset pending target whenever profileData changes (success or failure both send a fresh profile)
   createEffect(() => {
     props.profileData
     setTarget(null)
@@ -130,6 +131,7 @@ const ProfileView: Component<ProfileViewProps> = (props) => {
   }
 
   const handleCreateOrganization = () => {
+    // TODO(telemetry): capture CREATE_ORGANIZATION_LINK_CLICKED analytics event when telemetry pipeline is implemented.
     vscode.postMessage({ type: "openExternal", url: `${APP_BASE_URL}/organizations/new` })
   }
 
