@@ -23,6 +23,7 @@ const LanguageTab: Component = () => {
         }}
         variant="secondary"
         size="large"
+        searchable
       />
       <p style={{ "font-size": "12px", color: "var(--vscode-descriptionForeground)", "margin-top": "8px" }}>
         {language.t("settings.language.current")} {LOCALE_LABELS[language.locale()]}

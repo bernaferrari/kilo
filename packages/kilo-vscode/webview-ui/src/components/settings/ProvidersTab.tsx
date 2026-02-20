@@ -9,11 +9,7 @@ import { useLanguage } from "../../context/language"
 import { ModelSelectorBase } from "../chat/ModelSelector"
 import type { ModelSelection } from "../../types/messages"
 import SettingsRow from "./SettingsRow"
-
-interface ProviderOption {
-  value: string
-  label: string
-}
+import { ProviderSelector, ProviderOption } from "./ProviderSelector"
 
 /** Parse a "provider/model" config string into a ModelSelection (or null). */
 function parseModelConfig(raw: string | undefined): ModelSelection | null {
@@ -71,7 +67,7 @@ const ProvidersTab: Component = () => {
   return (
     <div>
       {/* Model selection */}
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.providers.defaultModel.title")}
           description={language.t("settings.providers.defaultModel.description")}
@@ -87,7 +83,6 @@ const ProvidersTab: Component = () => {
         <SettingsRow
           title={language.t("settings.providers.smallModel.title")}
           description={language.t("settings.providers.smallModel.description")}
-          last
         >
           <ModelSelectorBase
             value={parseModelConfig(config().small_model)}
@@ -97,7 +92,7 @@ const ProvidersTab: Component = () => {
             clearLabel={language.t("settings.providers.notSet")}
           />
         </SettingsRow>
-      </Card>
+      </div>
 
       {/* Disabled providers */}
       <h4 style={{ "margin-top": "16px", "margin-bottom": "8px" }}>{language.t("settings.providers.disabled")}</h4>
@@ -122,16 +117,11 @@ const ProvidersTab: Component = () => {
           }}
         >
           <div style={{ flex: 1 }}>
-            <Select
+            <ProviderSelector
               options={providerOptions().filter((o) => !disabledProviders().includes(o.value))}
-              current={newDisabled()}
-              value={(o) => o.value}
-              label={(o) => o.label}
+              value={newDisabled()}
               onSelect={(o) => setNewDisabled(o)}
-              variant="secondary"
-              size="small"
-              triggerVariant="settings"
-              placeholder="Select provider…"
+              placeholder={language.t("common.choose")}
             />
           </div>
           <Button
@@ -193,16 +183,11 @@ const ProvidersTab: Component = () => {
           }}
         >
           <div style={{ flex: 1 }}>
-            <Select
+            <ProviderSelector
               options={providerOptions().filter((o) => !enabledProviders().includes(o.value))}
-              current={newEnabled()}
-              value={(o) => o.value}
-              label={(o) => o.label}
+              value={newEnabled()}
               onSelect={(o) => setNewEnabled(o)}
-              variant="secondary"
-              size="small"
-              triggerVariant="settings"
-              placeholder="Select provider…"
+              placeholder={language.t("common.choose")}
             />
           </div>
           <Button

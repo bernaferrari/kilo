@@ -11,11 +11,10 @@ const CheckpointsTab: Component = () => {
 
   return (
     <div>
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.checkpoints.enable.title")}
           description={language.t("settings.checkpoints.enable.description")}
-          last
         >
           <Switch
             checked={config().snapshot !== false}
@@ -25,7 +24,7 @@ const CheckpointsTab: Component = () => {
             {language.t("settings.checkpoints.enable.title")}
           </Switch>
         </SettingsRow>
-      </Card>
+      </div>
     </div>
   )
 }

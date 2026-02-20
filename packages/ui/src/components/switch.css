@@ -25,7 +25,7 @@
     flex-shrink: 0;
     border-radius: 3px;
     border: 1px solid var(--border-weak-base);
-    background: var(--surface-base);
+    background: var(--input-base, var(--vscode-input-background));
     transition:
       background-color 150ms,
       border-color 150ms;
@@ -83,10 +83,10 @@
 
   &:hover:not([data-disabled], [data-readonly]) [data-slot="switch-control"] {
     border-color: var(--border-hover);
-    background-color: var(--surface-hover);
+    background-color: var(--input-base-hover, var(--vscode-editorHoverWidget-background));
   }
 
-  &:not([data-readonly]) [data-slot="switch-input"]:focus-visible ~ [data-slot="switch-control"] {
+  &:not([data-readonly]) [data-slot="switch-input"]:focus-visible~[data-slot="switch-control"] {
     border-color: var(--border-focus);
     box-shadow: var(--shadow-xs-border-focus);
   }

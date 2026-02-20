@@ -36,7 +36,7 @@ const ContextTab: Component = () => {
   return (
     <div>
       {/* Compaction settings */}
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.context.autoCompaction.title")}
           description={language.t("settings.context.autoCompaction.description")}
@@ -52,7 +52,6 @@ const ContextTab: Component = () => {
         <SettingsRow
           title={language.t("settings.context.prune.title")}
           description={language.t("settings.context.prune.description")}
-          last
         >
           <Switch
             checked={config().compaction?.prune ?? false}
@@ -62,7 +61,7 @@ const ContextTab: Component = () => {
             {language.t("settings.context.prune.title")}
           </Switch>
         </SettingsRow>
-      </Card>
+      </div>
 
       <h4 style={{ "margin-top": "16px", "margin-bottom": "8px" }}>{language.t("settings.context.watcherPatterns")}</h4>
 

@@ -62,12 +62,20 @@ const AutoApproveTab: Component = () => {
   return (
     <div data-component="auto-approve-settings">
       {/* Set All control */}
-      <Card>
+      <Card style={{ padding: "16px", "border-radius": "16px", border: "none" }}>
         <div
           data-slot="settings-row"
-          style={{ display: "flex", "align-items": "center", "justify-content": "space-between", padding: "8px 0" }}
+          style={{
+            display: "flex",
+            "flex-wrap": "wrap",
+            gap: "12px",
+            "align-items": "center",
+            "justify-content": "space-between",
+          }}
         >
-          <span style={{ "font-weight": "600" }}>{language.t("settings.autoApprove.setAll")}</span>
+          <span style={{ "font-weight": "600", flex: "1 1 150px", "min-width": "150px" }}>
+            {language.t("settings.autoApprove.setAll")}
+          </span>
           <Select
             options={LEVEL_OPTIONS}
             value={(o) => o.value}
@@ -84,52 +92,67 @@ const AutoApproveTab: Component = () => {
       <div style={{ "margin-top": "12px" }} />
 
       {/* Tool permission list */}
-      <Card>
+      <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
         <For each={[...TOOLS]}>
-          {(tool, index) => (
-            <div
-              data-slot="settings-row"
-              style={{
-                display: "flex",
-                "align-items": "center",
-                "justify-content": "space-between",
-                padding: "8px 0",
-                "border-bottom": index() < TOOLS.length - 1 ? "1px solid var(--border-weak-base)" : "none",
-              }}
-            >
-              <div style={{ flex: 1, "min-width": 0 }}>
+          {(tool, index) => {
+            const isFirst = index() === 0
+            const isLast = index() === TOOLS.length - 1
+            const radius = isFirst ? "16px 16px 4px 4px" : isLast ? "4px 4px 16px 16px" : "4px"
+
+            return (
+              <Card
+                style={{
+                  padding: "16px",
+                  "border-radius": radius,
+                  border: "none",
+                }}
+              >
                 <div
+                  data-slot="settings-row"
                   style={{
-                    "font-family": "var(--vscode-editor-font-family, monospace)",
-                    "font-size": "12px",
+                    display: "flex",
+                    "flex-wrap": "wrap",
+                    gap: "12px",
+                    "align-items": "center",
+                    "justify-content": "space-between",
                   }}
                 >
-                  {tool}
+                  <div style={{ flex: "1 1 200px", "min-width": "150px" }}>
+                    <div
+                      style={{
+                        "font-family": "var(--vscode-editor-font-family, monospace)",
+                        "font-size": "12px",
+                        "font-weight": "500",
+                      }}
+                    >
+                      {tool}
+                    </div>
+                    <div
+                      style={{
+                        "font-size": "11px",
+                        color: "var(--text-weak-base, var(--vscode-descriptionForeground))",
+                        "margin-top": "4px",
+                      }}
+                    >
+                      {language.t(`settings.autoApprove.tool.${tool}`)}
+                    </div>
+                  </div>
+                  <Select
+                    options={LEVEL_OPTIONS}
+                    current={LEVEL_OPTIONS.find((o) => o.value === getLevel(tool))}
+                    value={(o) => o.value}
+                    label={(o) => language.t(o.labelKey)}
+                    onSelect={(option) => option && setPermission(tool, option.value)}
+                    variant="secondary"
+                    size="small"
+                    triggerVariant="settings"
+                  />
                 </div>
-                <div
-                  style={{
-                    "font-size": "11px",
-                    color: "var(--text-weak-base, var(--vscode-descriptionForeground))",
-                    "margin-top": "2px",
-                  }}
-                >
-                  {language.t(`settings.autoApprove.tool.${tool}`)}
-                </div>
-              </div>
-              <Select
-                options={LEVEL_OPTIONS}
-                current={LEVEL_OPTIONS.find((o) => o.value === getLevel(tool))}
-                value={(o) => o.value}
-                label={(o) => language.t(o.labelKey)}
-                onSelect={(option) => option && setPermission(tool, option.value)}
-                variant="secondary"
-                size="small"
-                triggerVariant="settings"
-              />
-            </div>
-          )}
+              </Card>
+            )
+          }}
         </For>
-      </Card>
+      </div>
     </div>
   )
 }

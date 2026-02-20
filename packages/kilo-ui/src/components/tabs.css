@@ -27,13 +27,49 @@
   }
 
   /* Settings variant: content area padding and header styling */
-  &[data-variant="settings"] [data-slot="tabs-content"] {
-    padding: 16px 20px;
+  &[data-variant="settings"] {
+    [data-slot="tabs-list"] {
+      padding: 12px;
+      gap: 4px;
+      overflow-y: auto;
+    }
 
-    > h3 {
-      font-size: 18px;
+    [data-slot="tabs-trigger-wrapper"] {
+      background-color: transparent !important;
+      /* Force disable underlying wrapper hover/active */
+    }
+
+    [data-slot="tabs-trigger"] {
+      border-radius: 8px;
+      padding: 8px 16px;
+      height: 36px;
+      justify-content: flex-start;
+      margin-bottom: 2px;
+      color: var(--vscode-descriptionForeground);
+      transition: all 0.2s ease;
+
+      &[data-selected] {
+        background-color: var(--input-base, var(--vscode-input-background)) !important;
+        /* Force override */
+        color: var(--vscode-foreground);
+        font-weight: 500;
+      }
+
+      &:hover:not([data-selected]) {
+        background-color: var(--surface-hover, rgba(255, 255, 255, 0.05)) !important;
+        /* Force override */
+        color: var(--vscode-foreground);
+      }
+    }
+  }
+
+  &[data-variant="settings"] [data-slot="tabs-content"] {
+    padding: 16px 24px;
+
+    >h3 {
+      font-size: 20px;
       font-weight: 600;
-      margin: 0 0 16px 0;
+      margin: 0 0 24px 0;
       color: var(--vscode-foreground, var(--text-strong));
     }
   }

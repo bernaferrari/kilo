@@ -8,6 +8,7 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
     [data-slot="select-select-trigger-icon"] {
       width: 16px;
       height: 16px;
@@ -23,9 +24,11 @@
       &[data-variant="secondary"] {
         background-color: var(--button-secondary-hover);
       }
+
       &[data-variant="ghost"] {
         background-color: var(--surface-raised-base-active);
       }
+
       &[data-variant="primary"] {
         background-color: var(--icon-strong-active);
       }
@@ -35,9 +38,11 @@
       &[data-variant="secondary"] {
         background-color: var(--button-secondary-base);
       }
+
       &[data-variant="ghost"] {
         background-color: var(--surface-raised-base-hover);
       }
+
       &[data-variant="primary"] {
         background-color: var(--icon-strong-base);
       }
@@ -62,6 +67,7 @@
         font-size: var(--font-size-base);
         font-weight: var(--font-weight-regular);
       }
+
       [data-slot="select-select-trigger-icon"] {
         width: 16px;
         height: 20px;
@@ -96,12 +102,17 @@
   overflow: hidden;
   border-radius: var(--radius-md);
   background-color: var(--surface-raised-stronger-non-alpha);
-  padding: 4px;
+  padding: 0 4px;
+  /* Removed top/bottom padding to tighten popover */
   box-shadow: var(--shadow-xs-border);
   z-index: 60;
 
   &[data-expanded] {
     animation: select-open 0.15s ease-out;
+  }
+
+  &[data-searchable="true"] [data-slot="select-select-content-list"] {
+    padding-top: 0;
   }
 
   [data-slot="select-select-content-list"] {
@@ -116,7 +127,7 @@
       outline: none;
     }
 
-    > *:not([role="presentation"]) + *:not([role="presentation"]) {
+    >*:not([role="presentation"])+*:not([role="presentation"]) {
       margin-top: 2px;
     }
   }
@@ -135,7 +146,8 @@
     font-size: var(--font-size-small);
     font-style: normal;
     font-weight: var(--font-weight-medium);
-    line-height: var(--line-height-large); /* 166.667% */
+    line-height: var(--line-height-large);
+    /* 166.667% */
     letter-spacing: var(--letter-spacing-normal);
 
     color: var(--text-strong);
@@ -149,10 +161,12 @@
     &[data-highlighted] {
       background: var(--surface-raised-base-hover);
     }
+
     &[data-disabled] {
       background-color: var(--surface-raised-base);
       pointer-events: none;
     }
+
     [data-slot="select-select-item-indicator"] {
       display: flex;
       align-items: center;
@@ -161,9 +175,11 @@
       width: 16px;
       height: 16px;
     }
+
     &:focus {
       outline: none;
     }
+
     &:hover {
       background: var(--surface-raised-base-hover);
     }
@@ -195,6 +211,7 @@
     opacity: 0;
     transform: scale(0.95);
   }
+
   to {
     opacity: 1;
     transform: scale(1);

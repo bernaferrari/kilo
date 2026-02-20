@@ -163,11 +163,10 @@ const AgentBehaviourTab: Component = () => {
   const renderAgentsSubtab = () => (
     <div>
       {/* Default agent */}
-      <Card style={{ "margin-bottom": "12px" }}>
+      <div class="settings-group" style={{ "margin-bottom": "12px" }}>
         <SettingsRow
           title={language.t("settings.agentBehaviour.defaultAgent.title")}
           description={language.t("settings.agentBehaviour.defaultAgent.description")}
-          last
         >
           <Select
             options={defaultAgentOptions()}
@@ -178,9 +177,10 @@ const AgentBehaviourTab: Component = () => {
             variant="secondary"
             size="small"
             triggerVariant="settings"
+            searchable
           />
         </SettingsRow>
-      </Card>
+      </div>
 
       {/* Agent selector */}
       <div style={{ "margin-bottom": "12px" }}>
@@ -193,11 +193,12 @@ const AgentBehaviourTab: Component = () => {
           variant="secondary"
           size="small"
           triggerVariant="settings"
+          searchable
         />
       </div>
 
       <Show when={selectedAgent()}>
-        <Card>
+        <div class="settings-group">
           {/* Model override */}
           <SettingsRow
             title={language.t("settings.agentBehaviour.modelOverride.title")}
@@ -265,7 +266,6 @@ const AgentBehaviourTab: Component = () => {
           <SettingsRow
             title={language.t("settings.agentBehaviour.maxSteps.title")}
             description={language.t("settings.agentBehaviour.maxSteps.description")}
-            last
           >
             <TextField
               value={currentAgentConfig().steps?.toString() ?? ""}
@@ -276,7 +276,7 @@ const AgentBehaviourTab: Component = () => {
               }}
             />
           </SettingsRow>
-        </Card>
+        </div>
       </Show>
     </div>
   )
@@ -540,8 +540,8 @@ const AgentBehaviourTab: Component = () => {
       <div
         style={{
           display: "flex",
-          gap: "0",
-          "border-bottom": "1px solid var(--vscode-panel-border)",
+          "flex-wrap": "wrap",
+          gap: "8px",
           "margin-bottom": "16px",
         }}
       >
@@ -550,26 +550,37 @@ const AgentBehaviourTab: Component = () => {
             <button
               onClick={() => setActiveSubtab(subtab.id)}
               style={{
-                padding: "8px 16px",
-                border: "none",
-                background: "transparent",
+                padding: "6px 16px",
+                border:
+                  activeSubtab() === subtab.id
+                    ? "1px solid transparent"
+                    : "1px solid var(--border-weak-base, rgba(255, 255, 255, 0.08))",
+                background:
+                  activeSubtab() === subtab.id
+                    ? "var(--input-base, var(--vscode-input-background))"
+                    : "transparent",
                 color:
-                  activeSubtab() === subtab.id ? "var(--vscode-foreground)" : "var(--vscode-descriptionForeground)",
-                "font-size": "13px",
+                  activeSubtab() === subtab.id
+                    ? "var(--vscode-foreground)"
+                    : "var(--vscode-descriptionForeground)",
+                "font-size": "12px",
+                "font-weight": "normal",
                 "font-family": "var(--vscode-font-family)",
                 cursor: "pointer",
-                "border-bottom":
-                  activeSubtab() === subtab.id ? "2px solid var(--vscode-foreground)" : "2px solid transparent",
-                "margin-bottom": "-1px",
+                "border-radius": activeSubtab() === subtab.id ? "16px" : "4px",
+                "box-shadow": activeSubtab() === subtab.id ? "0 2px 6px rgba(0, 0, 0, 0.1)" : "none",
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
               }}
               onMouseEnter={(e) => {
                 if (activeSubtab() !== subtab.id) {
                   e.currentTarget.style.color = "var(--vscode-foreground)"
+                  e.currentTarget.style.background = "var(--surface-interactive-hover, rgba(255,255,255,0.05))"
                 }
               }}
               onMouseLeave={(e) => {
                 if (activeSubtab() !== subtab.id) {
                   e.currentTarget.style.color = "var(--vscode-descriptionForeground)"
+                  e.currentTarget.style.background = "transparent"
                 }
               }}
             >

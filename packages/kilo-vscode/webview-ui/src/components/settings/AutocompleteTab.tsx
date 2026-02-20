@@ -36,7 +36,7 @@ const AutocompleteTab: Component = () => {
 
   return (
     <div data-component="autocomplete-settings">
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.autocomplete.autoTrigger.title")}
           description={language.t("settings.autocomplete.autoTrigger.description")}
@@ -66,7 +66,6 @@ const AutocompleteTab: Component = () => {
         <SettingsRow
           title={language.t("settings.autocomplete.chatAutocomplete.title")}
           description={language.t("settings.autocomplete.chatAutocomplete.description")}
-          last
         >
           <Switch
             checked={enableChatAutocomplete()}
@@ -76,7 +75,7 @@ const AutocompleteTab: Component = () => {
             {language.t("settings.autocomplete.chatAutocomplete.title")}
           </Switch>
         </SettingsRow>
-      </Card>
+      </div>
     </div>
   )
 }

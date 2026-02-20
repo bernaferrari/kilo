@@ -1,10 +1,10 @@
 import { Component } from "solid-js"
-import { Select } from "@kilocode/kilo-ui/select"
 import { TextField } from "@kilocode/kilo-ui/text-field"
 import { Card } from "@kilocode/kilo-ui/card"
 import { useConfig } from "../../context/config"
 import { useLanguage } from "../../context/language"
 import SettingsRow from "./SettingsRow"
+import { SegmentedControl } from "./SegmentedControl"
 
 interface LayoutOption {
   value: string
@@ -22,7 +22,7 @@ const DisplayTab: Component = () => {
 
   return (
     <div>
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.display.username.title")}
           description={language.t("settings.display.username.description")}
@@ -39,20 +39,14 @@ const DisplayTab: Component = () => {
         <SettingsRow
           title={language.t("settings.display.layout.title")}
           description={language.t("settings.display.layout.description")}
-          last
         >
-          <Select
-            options={LAYOUT_OPTIONS}
-            current={LAYOUT_OPTIONS.find((o) => o.value === (config().layout ?? "auto"))}
-            value={(o) => o.value}
-            label={(o) => language.t(o.labelKey)}
-            onSelect={(o) => o && updateConfig({ layout: o.value as "auto" | "stretch" })}
-            variant="secondary"
-            size="small"
-            triggerVariant="settings"
+          <SegmentedControl
+            options={LAYOUT_OPTIONS.map((o) => ({ value: o.value, label: language.t(o.labelKey) }))}
+            value={config().layout ?? "auto"}
+            onChange={(val) => updateConfig({ layout: val as "auto" | "stretch" })}
           />
         </SettingsRow>
-      </Card>
+      </div>
     </div>
   )
 }

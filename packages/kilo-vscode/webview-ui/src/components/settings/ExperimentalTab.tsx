@@ -32,7 +32,7 @@ const ExperimentalTab: Component = () => {
 
   return (
     <div>
-      <Card>
+      <div class="settings-group">
         {/* Share mode */}
         <SettingsRow
           title={language.t("settings.experimental.share.title")}
@@ -119,7 +119,6 @@ const ExperimentalTab: Component = () => {
         <SettingsRow
           title={language.t("settings.experimental.mcpTimeout.title")}
           description={language.t("settings.experimental.mcpTimeout.description")}
-          last
         >
           <TextField
             value={String(experimental().mcp_timeout ?? 60000)}
@@ -131,17 +130,17 @@ const ExperimentalTab: Component = () => {
             }}
           />
         </SettingsRow>
-      </Card>
+      </div>
 
       {/* Tool toggles */}
       <Show when={config().tools && Object.keys(config().tools ?? {}).length > 0}>
         <h4 style={{ "margin-top": "16px", "margin-bottom": "8px" }}>
           {language.t("settings.experimental.toolToggles")}
         </h4>
-        <Card>
+        <div class="settings-group">
           <For each={Object.entries(config().tools ?? {})}>
-            {([name, enabled], index) => (
-              <SettingsRow title={name} description="" last={index() >= Object.keys(config().tools ?? {}).length - 1}>
+            {([name, enabled]) => (
+              <SettingsRow title={name} description="">
                 <Switch
                   checked={enabled}
                   onChange={(checked) => updateConfig({ tools: { ...config().tools, [name]: checked } })}
@@ -152,7 +151,7 @@ const ExperimentalTab: Component = () => {
               </SettingsRow>
             )}
           </For>
-        </Card>
+        </div>
       </Show>
     </div>
   )

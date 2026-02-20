@@ -56,7 +56,7 @@ const BrowserTab: Component = () => {
         </p>
       </div>
 
-      <Card>
+      <div class="settings-group">
         {/* Enable toggle */}
         <SettingsRow title={t("settings.browser.enable.title")} description={t("settings.browser.enable.description")}>
           <Switch checked={settings().enabled} onChange={(checked: boolean) => update("enabled", checked)} hideLabel>
@@ -82,13 +82,12 @@ const BrowserTab: Component = () => {
         <SettingsRow
           title={t("settings.browser.headless.title")}
           description={t("settings.browser.headless.description")}
-          last
         >
           <Switch checked={settings().headless} onChange={(checked: boolean) => update("headless", checked)} hideLabel>
             {t("settings.browser.headless.title")}
           </Switch>
         </SettingsRow>
-      </Card>
+      </div>
     </div>
   )
 }

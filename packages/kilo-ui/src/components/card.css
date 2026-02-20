@@ -2,7 +2,9 @@
 /* Kilo Card overrides – harmonized with @vscode/webview-ui-toolkit */
 
 [data-component="card"] {
-  border-radius: 2px;
-  padding: 8px;
+  border-radius: 12px;
+  padding: 16px;
   border: 1px solid var(--border-weak-base);
+  background: var(--surface-base, var(--vscode-editorWidget-background));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }

@@ -1,11 +1,11 @@
 import { Component, createSignal, onCleanup } from "solid-js"
 import { Switch } from "@kilocode/kilo-ui/switch"
-import { Select } from "@kilocode/kilo-ui/select"
 import { Card } from "@kilocode/kilo-ui/card"
 import { useVSCode } from "../../context/vscode"
 import { useLanguage } from "../../context/language"
 import type { ExtensionMessage } from "../../types/messages"
 import SettingsRow from "./SettingsRow"
+import { SegmentedControl } from "./SegmentedControl"
 
 interface SoundOption {
   value: string
@@ -50,7 +50,7 @@ const NotificationsTab: Component = () => {
 
   return (
     <div>
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.notifications.agent.title")}
           description={language.t("settings.notifications.agent.description")}
@@ -84,7 +84,6 @@ const NotificationsTab: Component = () => {
         <SettingsRow
           title={language.t("settings.notifications.errors.title")}
           description={language.t("settings.notifications.errors.description")}
-          last
         >
           <Switch
             checked={errorNotify()}
@@ -97,72 +96,50 @@ const NotificationsTab: Component = () => {
             {language.t("settings.notifications.errors.title")}
           </Switch>
         </SettingsRow>
-      </Card>
+      </div>
 
       <h4 style={{ "margin-top": "16px", "margin-bottom": "8px" }}>{language.t("settings.notifications.sounds")}</h4>
-      <Card>
+      <div class="settings-group">
         <SettingsRow
           title={language.t("settings.notifications.agentSound.title")}
           description={language.t("settings.notifications.agentSound.description")}
         >
-          <Select
-            options={SOUND_OPTIONS}
-            current={SOUND_OPTIONS.find((o) => o.value === agentSound())}
-            value={(o) => o.value}
-            label={(o) => language.t(o.labelKey)}
-            onSelect={(o) => {
-              if (o) {
-                setAgentSound(o.value)
-                save("sounds.agent", o.value)
-              }
+          <SegmentedControl
+            options={SOUND_OPTIONS.map((o) => ({ value: o.value, label: language.t(o.labelKey) }))}
+            value={agentSound()}
+            onChange={(val) => {
+              setAgentSound(val)
+              save("sounds.agent", val)
             }}
-            variant="secondary"
-            size="small"
-            triggerVariant="settings"
           />
         </SettingsRow>
         <SettingsRow
           title={language.t("settings.notifications.permSound.title")}
           description={language.t("settings.notifications.permSound.description")}
         >
-          <Select
-            options={SOUND_OPTIONS}
-            current={SOUND_OPTIONS.find((o) => o.value === permSound())}
-            value={(o) => o.value}
-            label={(o) => language.t(o.labelKey)}
-            onSelect={(o) => {
-              if (o) {
-                setPermSound(o.value)
-                save("sounds.permissions", o.value)
-              }
+          <SegmentedControl
+            options={SOUND_OPTIONS.map((o) => ({ value: o.value, label: language.t(o.labelKey) }))}
+            value={permSound()}
+            onChange={(val) => {
+              setPermSound(val)
+              save("sounds.permissions", val)
             }}
-            variant="secondary"
-            size="small"
-            triggerVariant="settings"
           />
         </SettingsRow>
         <SettingsRow
           title={language.t("settings.notifications.errorSound.title")}
           description={language.t("settings.notifications.errorSound.description")}
-          last
         >
-          <Select
-            options={SOUND_OPTIONS}
-            current={SOUND_OPTIONS.find((o) => o.value === errorSound())}
-            value={(o) => o.value}
-            label={(o) => language.t(o.labelKey)}
-            onSelect={(o) => {
-              if (o) {
-                setErrorSound(o.value)
-                save("sounds.errors", o.value)
-              }
+          <SegmentedControl
+            options={SOUND_OPTIONS.map((o) => ({ value: o.value, label: language.t(o.labelKey) }))}
+            value={errorSound()}
+            onChange={(val) => {
+              setErrorSound(val)
+              save("sounds.errors", val)
             }}
-            variant="secondary"
-            size="small"
-            triggerVariant="settings"
           />
         </SettingsRow>
-      </Card>
+      </div>
     </div>
   )
 }

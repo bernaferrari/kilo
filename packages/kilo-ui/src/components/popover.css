@@ -2,7 +2,7 @@
 /* Kilo Popover overrides */
 
 [data-component="popover-content"] {
-  border-radius: 2px;
+  border-radius: 12px;
   border: 1px solid var(--border-base);
   overflow: hidden;
 

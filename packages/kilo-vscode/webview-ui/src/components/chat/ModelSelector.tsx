@@ -7,7 +7,7 @@
  * ModelSelector    — thin wrapper wired to session context for chat usage.
  */
 
-import { Component, createSignal, createMemo, createEffect, For, Show } from "solid-js"
+import { Component, createSignal, createMemo, createEffect, For, Show, JSX } from "solid-js"
 import { Popover } from "@kilocode/kilo-ui/popover"
 import { Button } from "@kilocode/kilo-ui/button"
 import { useProvider, EnrichedModel } from "../../context/provider"
@@ -182,6 +182,39 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
     return flatFiltered().indexOf(model) + clearOffset()
   }
 
+  // Highlight search characters
+  function highlightText(text: string, query: string): JSX.Element {
+    if (!query) return <>{text}</>
+
+    const lowerText = text.toLowerCase()
+    const lowerQuery = query.toLowerCase()
+
+    let result: JSX.Element[] = []
+    let lastIndex = 0
+    let matchIndex = lowerText.indexOf(lowerQuery)
+
+    if (matchIndex === -1) return <>{text}</>
+
+    while (matchIndex !== -1) {
+      if (matchIndex > lastIndex) {
+        result.push(<span>{text.substring(lastIndex, matchIndex)}</span>)
+      }
+      result.push(
+        <span style={{ color: "var(--vscode-textLink-foreground, #3794ff)", "font-weight": "bold" }}>
+          {text.substring(matchIndex, matchIndex + query.length)}
+        </span>
+      )
+      lastIndex = matchIndex + query.length
+      matchIndex = lowerText.indexOf(lowerQuery, lastIndex)
+    }
+
+    if (lastIndex < text.length) {
+      result.push(<span>{text.substring(lastIndex)}</span>)
+    }
+
+    return <>{result}</>
+  }
+
   const triggerLabel = () => {
     const sel = selectedModel()
     if (sel) {
@@ -212,7 +245,7 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
       }}
       trigger={
         <>
-          <span class="model-selector-trigger-label">{() => triggerLabel()}</span>
+          <span class="model-selector-trigger-label">{triggerLabel()}</span>
           <svg class="model-selector-trigger-chevron" width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 4l4 5H4l4-5z" />
           </svg>
@@ -264,7 +297,7 @@ export const ModelSelectorBase: Component<ModelSelectorBaseProps> = (props) => {
                       onClick={() => pick(model)}
                       onMouseEnter={() => setActiveIndex(flatIndex(model))}
                     >
-                      <span class="model-selector-item-name">{model.name}</span>
+                      <span class="model-selector-item-name">{highlightText(model.name, search())}</span>
                       <Show when={isFree(model)}>
                         <span class="model-selector-tag">{language.t("model.tag.free")}</span>
                       </Show>

@@ -1,5 +1,5 @@
 import { Select as Kobalte } from "@kobalte/core/select"
-import { createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
+import { createMemo, createSignal, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
 import { pipe, groupBy, entries, map } from "remeda"
 import { Button, ButtonProps } from "./button"
 import { Icon } from "./icon"
@@ -19,6 +19,7 @@ export type SelectProps<T> = Omit<ComponentProps<typeof Kobalte<T>>, "value" | "
   children?: (item: T | undefined) => JSX.Element
   triggerStyle?: JSX.CSSProperties
   triggerVariant?: "settings"
+  searchable?: boolean
 }
 
 export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">) {
@@ -38,7 +39,34 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     "children",
     "triggerStyle",
     "triggerVariant",
+    "searchable",
   ])
+
+  const [search, setSearch] = createSignal("")
+  let searchRef: HTMLInputElement | undefined
+
+  function highlightText(text: string, query: string): JSX.Element {
+    if (!query) return <>{text}</>
+    const lowerText = text.toLowerCase()
+    const lowerQuery = query.toLowerCase()
+    let result: JSX.Element[] = []
+    let lastIndex = 0
+    let matchIndex = lowerText.indexOf(lowerQuery)
+    if (matchIndex === -1) return <>{text}</>
+
+    while (matchIndex !== -1) {
+      if (matchIndex > lastIndex) {
+        result.push(<>{text.slice(lastIndex, matchIndex)}</>)
+      }
+      result.push(<span style={{ color: "var(--vscode-textLink-foreground)" }}>{text.slice(matchIndex, matchIndex + query.length)}</span>)
+      lastIndex = matchIndex + query.length
+      matchIndex = lowerText.indexOf(lowerQuery, lastIndex)
+    }
+    if (lastIndex < text.length) {
+      result.push(<>{text.slice(lastIndex)}</>)
+    }
+    return result
+  }
 
   const state = {
     key: undefined as string | undefined,
@@ -69,9 +97,18 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
 
   onCleanup(stop)
 
+  const filteredOptions = createMemo(() => {
+    if (!local.searchable || !search()) return local.options
+    const q = search().toLowerCase()
+    return local.options.filter((x) => {
+      const textToSearch = local.label ? local.label(x) : String(x)
+      return textToSearch.toLowerCase().includes(q)
+    })
+  })
+
   const grouped = createMemo(() => {
     const result = pipe(
-      local.options,
+      filteredOptions(),
       groupBy((x) => (local.groupBy ? local.groupBy(x) : "")),
       // mapValues((x) => x.sort((a, b) => a.title.localeCompare(b.title))),
       entries(),
@@ -110,11 +147,15 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
           onFocus={() => move(itemProps.item.rawValue)}
         >
           <Kobalte.ItemLabel data-slot="select-select-item-label">
-            {local.children
-              ? local.children(itemProps.item.rawValue)
-              : local.label
-                ? local.label(itemProps.item.rawValue)
-                : (itemProps.item.rawValue as string)}
+            {local.searchable && local.label
+              ? highlightText(local.label(itemProps.item.rawValue), search())
+              : local.children
+                ? local.children(itemProps.item.rawValue)
+                : local.label
+                  ? local.label(itemProps.item.rawValue)
+                  : local.searchable && !local.label
+                    ? highlightText(itemProps.item.rawValue as string, search())
+                    : (itemProps.item.rawValue as string)}
           </Kobalte.ItemLabel>
           <Kobalte.ItemIndicator data-slot="select-select-item-indicator">
             <Icon name="check-small" size="small" />
@@ -127,7 +168,12 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
       }}
       onOpenChange={(open) => {
         local.onOpenChange?.(open)
-        if (!open) stop()
+        if (!open) {
+          stop()
+          setSearch("")
+        } else if (local.searchable) {
+          setTimeout(() => searchRef?.focus(), 0)
+        }
       }}
     >
       <Kobalte.Trigger
@@ -162,7 +208,44 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
           }}
           data-component="select-content"
           data-trigger-style={local.triggerVariant}
+          data-searchable={local.searchable ? "true" : undefined}
         >
+          {local.searchable && (
+            <div
+              style={{
+                padding: "6px 8px",
+                "border-bottom": "1px solid var(--border-weak-base, rgba(255, 255, 255, 0.08))"
+              }}
+            >
+              <input
+                ref={searchRef}
+                type="text"
+                placeholder="Search..."
+                value={search()}
+                onInput={(e) => setSearch(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
+                    return
+                  }
+                  if (e.metaKey || e.ctrlKey) {
+                    return
+                  }
+                  e.stopPropagation()
+                }}
+                style={{
+                  width: "100%",
+                  "box-sizing": "border-box",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--text-strong, var(--vscode-foreground))",
+                  padding: "0",
+                  outline: "none",
+                  "font-size": "13px",
+                  "font-family": "var(--font-family-sans, var(--vscode-font-family))",
+                }}
+              />
+            </div>
+          )}
           <Kobalte.Listbox data-slot="select-select-content-list" />
         </Kobalte.Content>
       </Kobalte.Portal>

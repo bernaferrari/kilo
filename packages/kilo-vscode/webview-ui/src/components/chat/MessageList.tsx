@@ -164,15 +164,21 @@ export const MessageList: Component<MessageListProps> = (props) => {
             <p class="kilo-about-text">{language.t("session.messages.welcome")}</p>
             <Show when={recent().length > 0 && props.onSelectSession}>
               <div class="recent-sessions">
-                <span class="recent-sessions-label">{language.t("session.recent")}</span>
-                <For each={recent()}>
-                  {(s) => (
-                    <button class="recent-session-item" onClick={() => props.onSelectSession?.(s.id)}>
-                      <span class="recent-session-title">{s.title || language.t("session.untitled")}</span>
-                      <span class="recent-session-date">{formatRelativeDate(s.updatedAt)}</span>
-                    </button>
-                  )}
-                </For>
+                <div class="recent-sessions-header">
+                  <span class="recent-sessions-label">{language.t("session.recent")}</span>
+                </div>
+                <div class="recent-sessions-list">
+                  <For each={recent()}>
+                    {(s) => (
+                      <button class="recent-session-item" onClick={() => props.onSelectSession?.(s.id)}>
+                        <span class="recent-session-title">{s.title || language.t("session.untitled")}</span>
+                        <div class="recent-session-meta">
+                          <span class="recent-session-date">{formatRelativeDate(s.updatedAt)}</span>
+                        </div>
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
             </Show>
           </div>
